@@ -1,8 +1,9 @@
-#%% validate my SMB fields to ALETSCH
+#%% validate my SMB fields to ALETSCH and MORTERATSCH benchmark data
 # using ContinuIX aletsch benchmark data;
 # provided in .dat files for every year, 
 # has been extrapolated from point data so should be similar to glamos elevation-bins but then spatial
 
+# M. Izeboud, April/May 2026
 
 import os
 import xarray as xr
@@ -10,8 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import geopandas as gpd
 import rasterio as rio
-os.chdir('/Users/mizeboud/Documents/Documents_mizeboud/PostDoc/2D-SMB/code/SMB-from-remote-sensing/scripts/')
-import myFunctions as myf
+import pandas as pd
 
 target_crs = 'EPSG:32632' ## EPSG of Millan2022 (50 m resolution) --> where I have all my input/bruteForceOutput in
 swiss_crs = 'EPSG:21781' # 'EPSG:2056' ## CH1903 / LV95 ## data of GLAMOS stakes
@@ -21,19 +21,47 @@ homedir = '/Users/mizeboud/Documents/Documents_mizeboud/PostDoc/2D-SMB/'
 
 my_palette = ['#2b6f39','#efbb1a','#d490c6'] #  update the brown/yellow of cubeH hex: '#a1794a' to ....#efbb1a
 
-#%% load morteratsch outlines
+save_fig = False 
+path2save = os.path.join('/Users/mizeboud/Documents/Documents_mizeboud/', 
+                         'Projects/ContinuIX/26-EGUposter/figures')
+
+
+#%% Functions
+
+def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
+    ''' Match xarray grid of different spatial resolutions.'''
+
+    # Expected order: ('time', 'y', 'x')
+    dims = img_da.dims
+    if 'time' in dims:
+        ref_img_da = ref_img_da.transpose('time','y','x') # CRS is alreadyy written .rio.write_crs(3031, inplace=True)
+        img_da = img_da.transpose('time','y','x')
+    
+    # -- reproject (even though same crs) and match grid (extent, resolution and projection)
+    img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
+
+    # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
+    img_repr_match = img_repr_match.assign_coords({
+        "y": ref_img_da.y,
+        "x": ref_img_da.x,
+    })
+    
+    return img_repr_match.transpose(*dims) # transpose dimension order back to original
+
+#%% load ALETSCH outlines
+
+''' ------------------
+### ALETSCH
+---------------------- '''
 glacier_rgiid = 'RGI60-11.01450' # Aletsch ['RGI60-11.01450']
 rgi_swiss_file = os.path.join(data_dir, 'RGI/11_rgi60_Swiss/11_rgi60_Swiss_simplified.shp')
 gl_outline_swiss = gpd.read_file(rgi_swiss_file)
 
 ''' ALL SWISS glaciers; use RGI outliens; only larger than >2km '''
-gdf_swiss_rgi = gl_outline_swiss.loc[gl_outline_swiss['Area']>2] # 117 glaciers 
-print(len(gdf_swiss_rgi))
-
-gdf_aletsch = gdf_swiss_rgi.loc[gdf_swiss_rgi['RGIId']==glacier_rgiid].copy()
+gdf_aletsch = gl_outline_swiss.loc[gl_outline_swiss['RGIId']==glacier_rgiid].copy()
 gdf_aletsch.to_crs(swiss_crs, inplace=True)
 
-#%% load aletsch data
+'''#%% load aletsch data'''
 path2aletsch = '/Users/mizeboud/Library/CloudStorage/OneDrive-VrijeUniversiteitBrussel/ContinuIX/ContinuIX_WP1_data/11_Aletsch/aletsch_smb_extrapolated_2000-2025/'
 
 files_smb_aletsch = sorted([f for f in os.listdir(path2aletsch) if f.endswith('.grid')])
@@ -50,10 +78,9 @@ ds_aletsch['time'] = times_aletsch
 ds_aletsch.rio.crs # not given, need to set. README states "old LV95" grid which I think is 21781
 ds_aletsch.rio.write_crs('EPSG:21781', inplace=True)
 
-da_aletsch = ds_aletsch.sel(time=slice(2000,2020))['SMB'].mean(dim='time') # average over 2000-2020 to compare to my 2000-2020 
+da_aletsch_avg = ds_aletsch.sel(time=slice(2000,2020))['SMB'].mean(dim='time') # average over 2000-2020 to compare to my 2000-2020 
 # unit: unit: m w.e.
 
-#%% load my SMB data for Aletsch glacier
 
 ''' ----------
 ## Load my SMB -- m.w.e or mie/yr ? 
@@ -61,8 +88,6 @@ da_aletsch = ds_aletsch.sel(time=slice(2000,2020))['SMB'].mean(dim='time') # ave
 path2smb = '/Users/mizeboud/Library/Mobile Documents/com~apple~CloudDocs/Documents/Data_iCloud/SMB2D/SMB2D/bruteForce/bestParams_f001_F080_N9/'
 
 da_smb0020 = xr.open_dataarray( os.path.join(path2smb, 'smb_2000-2020/', f'{glacier_rgiid}_smb-kgyr_f001_F080_N9.tif') ).isel(band=0).drop_vars('band').rename('SMB')
-# da_smb1020 = xr.open_dataarray( os.path.join(path2smb, 'smb_2010-2020/', f'{glacier_rgiid}_smb_2010-2020_F075_N8.tif') ).isel(band=0).drop_vars('band').rename('SMB')
-# da_smb1520 = xr.open_dataarray( os.path.join(path2smb, 'smb_2015-2020/', f'{glacier_rgiid}_smb_2015-2020_F075_N8.tif') ).isel(band=0).drop_vars('band').rename('SMB')
 da_smb1020 = xr.open_dataarray( os.path.join(path2smb, 'smb_2010-2020/', f'{glacier_rgiid}_smb-kgyr_f001_F080_N9.tif') ).isel(band=0).drop_vars('band').rename('SMB')
 da_smb1520 = xr.open_dataarray( os.path.join(path2smb, 'smb_2015-2020/', f'{glacier_rgiid}_smb-kgyr_f001_F080_N9.tif') ).isel(band=0).drop_vars('band').rename('SMB')
 
@@ -78,18 +103,16 @@ da_smb1520 = da_smb1520.rio.reproject(swiss_crs, inplace=True)
 ## Aletsch average and spatial diff 
 -------------- '''
 ## get aletsch average
-da_mort_avg = da_aletsch.copy() 
-## clip da_mort to same bounds
+## clip da_aletsch_avg to same bounds
 myextent = da_smb0020.rio.bounds()
-da_mort_avg = da_mort_avg.rio.clip_box(minx=myextent[0], miny=myextent[1], maxx=myextent[2], maxy=myextent[3])
-## match da_mort grid to my SMB fields
-da_mort_avg_50m = myf.reproject_match_grid(da_smb0020, da_mort_avg, resample_method=rio.enums.Resampling.bilinear)
+da_aletsch_avg = da_aletsch_avg.rio.clip_box(minx=myextent[0], miny=myextent[1], maxx=myextent[2], maxy=myextent[3])
+## match da_aletsch_avg grid to my SMB fields
+da_aletsch_avg_50m = reproject_match_grid(da_smb0020, da_aletsch_avg, resample_method=rio.enums.Resampling.bilinear)
 
 ## caclulcate pixel diff
-diff_0020 = da_smb0020 - da_mort_avg_50m
-diff_1020 = da_smb1020 - da_mort_avg_50m
-diff_1520 = da_smb1520 - da_mort_avg_50m
-
+diff_0020 = da_smb0020 - da_aletsch_avg_50m
+diff_1020 = da_smb1020 - da_aletsch_avg_50m
+diff_1520 = da_smb1520 - da_aletsch_avg_50m
 
 
 ### calculate MAE and RMSE
@@ -108,10 +131,9 @@ print(f'MAE 2015-2020: {mae_1520:.2f}, RMSE 2015-2020: {rmse_1520:.2f}')
 ''' ----------
 ## pandas dataframe for Regression plot 
 -------------- '''
-import pandas as pd
-import seaborn as sns
+
 df_pxs = pd.DataFrame()
-df_pxs_uav = da_mort_avg_50m.to_dataframe()
+df_pxs_uav = da_aletsch_avg_50m.to_dataframe()
 df_pxs_smb0020 = da_smb0020.to_dataframe() # .reset_index()
 df_pxs_smb1020 = da_smb1020.to_dataframe() # .reset_index()
 df_pxs_smb1520 = da_smb1520.to_dataframe() # .
@@ -125,9 +147,6 @@ df_pxs = df_pxs.dropna()
 df_pxs.reset_index(inplace=True)
 df_pxs
 
-# ## to longform format
-# df_pxs_long = df_pxs.melt(id_vars=['x','y','SMB_uav'], value_vars=['SMB_0020','SMB_1020','SMB_1520'], var_name='modeled_period', value_name='SMB_modeled')
-# df_pxs_long
 
 ## get simple regression for each scatterplot
 x1, y1 = df_pxs['SMB_uav'].values, df_pxs['SMB_0020'].values
@@ -145,18 +164,16 @@ print(f'R2 2000-2020: {r2_1:.2f}, R2 2010-2020: {r2_2:.2f}, R2 2015-2020: {r2_3:
 
 
 
-#%% MASTER PLOT 
-
-path2save = os.path.join('/Users/mizeboud/Documents/Documents_mizeboud/', 
-                         'Projects/ContinuIX/26-EGUposter/figures')
-save_fig = True 
+'''----------------------
+#### PLOT FIGURE ALETSCH
+------------------------- '''
 
 fig,axs = plt.subplots(1,3, figsize=(15,6))
 
-''' ######## TOP ROW plot aletsch average + my SMB ########### '''
+''' ######## SPATIAL plot aletsch average + my SMB ########### '''
 
 ax=axs[0]#[0,0]
-da_mort_avg.plot.imshow(ax=ax, vmin=-8, vmax=8, cmap='RdBu', 
+da_aletsch_avg.plot.imshow(ax=ax, vmin=-8, vmax=8, cmap='RdBu', 
                         add_colorbar=False,
                         # cbar_kwargs={'shrink': 0.7,'fraction':0.036}
                         ); 
@@ -191,7 +208,6 @@ scalebar=ScaleBar(dx=1, # size of pixel
                     box_alpha=0.5,
                     )
 axs[0].add_artist(scalebar)
-# ax.set_axis_off()
 
 ## move axis a bit to the left to make sapce for next plot
 ## also move colorbar of second plot to the left
@@ -205,13 +221,14 @@ cbar.set_ticks([-8, -4, 0, 4, 8])
 cbar.set_ticklabels(['-8', '-4', '0', '4', '8'])
 cbar.set_label('m w.e. yr$^{-1}$',)
 # break
-''' ######## BOTTOM ROW scatterplot + spatial diff '''
+
+''' ######## RIGHT PANEL scatterplot + spatial diff '''
 
 
 #### SCATTER REGRESSION
 ax = axs[2]#,0]
 
-ax.scatter(da_mort_avg_50m.values.flatten(), da_smb0020.values.flatten(), 
+ax.scatter(da_aletsch_avg_50m.values.flatten(), da_smb0020.values.flatten(), 
            s=5, marker='^', alpha=0.5, label='2000-2020', color=my_palette[0])   
 xlim = ax.get_xlim(); ylim = ax.get_ylim();  
 ax.plot(xlim, xlim, color='black', linestyle='--')
@@ -236,13 +253,18 @@ if save_fig:
     fig.savefig(os.path.join(path2save, 'compare_SMB_fields_and_scatter_aletsch.png'), bbox_inches='tight', dpi=300)
     fig.savefig(os.path.join(path2save, 'compare_SMB_fields_and_scatter_aletsch.pdf'), bbox_inches='tight')
 
+
 #%% Also Morteratsch same style
+''' ------------------
+### MORTERATSCH
+---------------------- '''
+
 glacier_rgiid = 'RGI60-11.01946' # Morteratsch
 
-gdf_morteratsch = gdf_swiss_rgi.loc[gdf_swiss_rgi['RGIId']==glacier_rgiid].copy()
+gdf_morteratsch = gl_outline_swiss.loc[gl_outline_swiss['RGIId']==glacier_rgiid].copy()
 gdf_morteratsch.to_crs(swiss_crs, inplace=True)
-# gdf_morteratsch.plot()
-##  load morteratsch data 
+
+'''##  load morteratsch data '''
 path2morteratsch = '/Users/mizeboud/Library/Mobile Documents/com~apple~CloudDocs/Documents/Data_iCloud/SMB2D/vanTricht2021/'
 
 ## load mortertsch data
@@ -254,7 +276,7 @@ da_mort1920 = xr.open_dataarray( os.path.join(path2morteratsch, 'SMB1920.tif') )
 ## get morteratsch average
 da_mort_avg = xr.concat([da_mort1718, da_mort1819, da_mort1920], dim='time').mean(dim='time')
 
-## morteratsc smb
+## Get My Morteratsch smb
 path2smb = '/Users/mizeboud/Library/Mobile Documents/com~apple~CloudDocs/Documents/Data_iCloud/SMB2D/SMB2D/bruteForce/bestParams_f001_F080_N9/'
 da_smb0020 = xr.open_dataarray( os.path.join(path2smb, 'smb_2000-2020/', f'{glacier_rgiid}_smb-kgyr_f001_F080_N9.tif') ).isel(band=0).drop_vars('band').rename('SMB')
 da_smb0020 = da_smb0020.rio.reproject(swiss_crs, inplace=True)
@@ -262,17 +284,17 @@ da_smb1520 = xr.open_dataarray( os.path.join(path2smb, 'smb_2015-2020/', f'{glac
 da_smb1520 = da_smb1520.rio.reproject(swiss_crs, inplace=True)
 
 
-## caclulcate pixel diff
-diff_0020 = da_smb0020 - da_mort_avg_50m
-diff_1020 = da_smb1020 - da_mort_avg_50m
-diff_1520 = da_smb1520 - da_mort_avg_50m
-
-
 ## clip da_mort to same bounds
 myextent = da_smb0020.rio.bounds()
 da_mort_avg = da_mort_avg.rio.clip_box(minx=myextent[0], miny=myextent[1], maxx=myextent[2], maxy=myextent[3])
 ## match da_mort grid to my SMB fields
-da_mort_avg_50m = myf.reproject_match_grid(da_smb0020, da_mort_avg, resample_method=rio.enums.Resampling.bilinear)
+da_mort_avg_50m = reproject_match_grid(da_smb0020, da_mort_avg, resample_method=rio.enums.Resampling.bilinear)
+
+
+## caclulcate pixel diff
+diff_0020 = da_smb0020 - da_mort_avg_50m
+diff_1020 = da_smb1020 - da_mort_avg_50m
+diff_1520 = da_smb1520 - da_mort_avg_50m
 
 
 ### calculate MAE and RMSE
@@ -314,14 +336,13 @@ r2_3 = model3.score(x3.reshape(-1,1), y3)
 print(f'R2 2000-2020: {r2_1:.2f}, R2 2015-2020: {r2_3:.2f}')
 
 
-#%%
-path2save = os.path.join('/Users/mizeboud/Documents/Documents_mizeboud/', 
-                         'Projects/ContinuIX/26-EGUposter/figures')
-save_fig = True 
+''' ----------
+## PLOT MORTERATSCH
+-------------- '''
 
 fig,axs = plt.subplots(1,3, figsize=(15,6))
 
-''' ######## TOP ROW plot aletsch average + my SMB ########### '''
+''' ######## SPATIAL plot aletsch average + my SMB ########### '''
 da_smb_plot = da_smb0020.copy(); year_plot = '2000-2020'
 da_smb_plot = da_smb1520.copy(); year_plot = '2015-2020'
 
@@ -381,8 +402,7 @@ cbar.set_ticklabels(['-8', '-4', '0', '4', '8'])
 cbar.set_label('m w.e. yr$^{-1}$',)
 # break
 
-''' ######## BOTTOM ROW scatterplot + spatial diff '''
-
+''' ######## RIGHT PANEL scatterplot + spatial diff '''
 
 #### SCATTER REGRESSION
 ax = axs[2]#,0]

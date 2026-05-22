@@ -1,37 +1,26 @@
 #%% Visualize datafields of a few glaciers for EGU26 poster
 # little data processing, just mapping and plotting
 
+# M. Izeboud, April/May 2026
+
 import os
-from shapely import LineString
 import xarray as xr
 import numpy as np 
 import matplotlib.pyplot as plt 
+from matplotlib_scalebar.scalebar import ScaleBar
 import geopandas as gpd
+import pandas as pd
 import rasterio as rio
-import geopandas as gdp
 
-# os.chdir('/Users/mizeboud/Documents/Documents_mizeboud/PostDoc/2D-SMB/code/SMB-from-remote-sensing/scripts/')
-# import myFunctions as myf
-
-target_crs = 'EPSG:32632' ## EPSG of Millan2022 (50 m resolution) --> where I have all my input/bruteForceOutput in
-swiss_crs = 'EPSG:21781' # 'EPSG:2056' ## CH1903 / LV95 ## data of GLAMOS stakes
-swiss_crs_morteratsch = 'EPSG:2056' ##  CH1903+ / LV95 
-
-# data_dir = '/Users/mizeboud/Library/Mobile Documents/com~apple~CloudDocs/Documents/Data_iCloud/SMB2D/'
 data_dir = '/Users/mizeboud/Library/CloudStorage/OneDrive-VrijeUniversiteitBrussel/ContinuIX/ContinuIX_WP1_data/'
 homedir = '/Users/mizeboud/Documents/Documents_mizeboud/Projects/ContinuIX/'
 
-my_palette = ['#2b6f39','#efbb1a','#d490c6'] #  update the brown/yellow of cubeH hex: '#a1794a' to ....#efbb1a
-
 ## import scientificcolormaps 
 from cmcrameri import cm
-import matplotlib.pyplot as plt
-import numpy as np
 x = np.linspace(0, 100, 100)[None, :]
-# plt.imshow(x, aspect='auto', cmap=cm.tokyo) #
 
 
-#%%
+#%% Functions
 
 def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
     ''' Match xarray grid of different spatial resolutions.'''
@@ -55,29 +44,39 @@ def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampl
 
 
 
-#%% Hofsjokull: outline -- RGI v6
+#%% HOFSJOKULL
+'''# ########################################
+# Hofsjokull
+Outlines EPSG 3057
+- Thickness: from DEM and BEDROCK files at 2m resolution for 2013, 2020 and 2023
+- dhdt: from DEM
+- outlines: only rgi v6
+- velocity: many years, [2014,2016,2017,2019,2020,2021,2022,2023], at 100 m resolution
+#########################################
+'''
+
+''' ------------------
+### HOFSJOKULL OUTLINE (rgi v6) 
+---------------------- '''
 crs_hofsj = 'EPSG:3057'
 
 outline_hofsj = os.path.join(data_dir,'other_data/outline_Hofsjokull_RGIv6_4326.shp')
 gdf_hofsj = gpd.read_file(outline_hofsj).to_crs(crs_hofsj)
 
 ## merge all geometries into one (dissolve) to have a single outline for clipping
-# gdf_hofsj_outline = gdp.unary_union(gdf_hofsj) # dissolve by RGIId to merge all geometries into one
-# gdf_hofsj_outline = gdf_hofsj.geometry.union()# Single merged geometry (Polygon or MultiPolygon)
 hofsj_union = gdf_hofsj.geometry.union_all()   # GeoPandas/Shapely recent versions
 # or (older API): hofsj_union = gdf_hofsj.unary_union
 gdf_hofsj_union = gpd.GeoDataFrame(geometry=[hofsj_union], crs=gdf_hofsj.crs)
-gdf_hofsj_union.boundary.plot()
 
 
-#%% Hofsjokull : DEM AND BEDROCK
+'''------------------
+####  Hofsjokull : DEM AND BEDROCK
+------------------'''
+
 #  Icelandic reference system ISN93 (EPSG:3057) 
 crs_hofsj = 'EPSG:3057'
 DEM_files = ['Hofsjokull_20131013_zmae.tif','hofs_oct2020_jitcor_mosaicblend.tif','hofs_sep2023_jitcor_mosaicblend.tif' ]
 path2dem = os.path.join(data_dir,'06_Hofsjokull/Hofsjokull_dem/')
-# da_hofsj_dem = xr.open_mfdataset([os.path.join(path2dem, f) for f in DEM_files], engine='rasterio', join='outer',
-#                                   combine='nested', concat_dim='file'
-#                                   ).isel(band=0).drop_vars('band').rename({'band_data':'DEM'})
 
 ## at 2m spatial resolution
 da_hofsj_2013 = xr.open_dataset(os.path.join(path2dem, DEM_files[0]), engine='rasterio').isel(band=0).drop_vars('band').rename({'band_data':'DEM'})
@@ -96,50 +95,46 @@ ds_hofsj_dem_50m = ds_hofsj_dem.rio.reproject(crs_hofsj, resolution=50,
                                             #   resampling=rio.enums.Resampling.bilinear, 
                                               nodata=np.nan)
 
-# %%
-ds_hofsj_dem_50m['DEM'].plot.imshow(cmap='terrain', col='time', col_wrap=3)
-## add outlien to each of the subplots
-fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
-for i, ax in enumerate(axs):
-    ds_hofsj_dem_50m['DEM'].isel(time=i
-                  ).plot.imshow(ax=ax, cmap='terrain', vmin=700, vmax=1800,
-                            #    add_colorbar=False if i<2 else True, # only add colorbar to the last subplot
-                            cbar_kwargs={'fraction':0.04, 'label':'DEM (m)'} )#if i == 2 else None) # only add colorbar to the last subplot
+## figure every timestep
+# ds_hofsj_dem_50m['DEM'].plot.imshow(cmap='terrain', col='time', col_wrap=3)
+# ## add outlien to each of the subplots
+# fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
+# for i, ax in enumerate(axs):
+#     ds_hofsj_dem_50m['DEM'].isel(time=i
+#                   ).plot.imshow(ax=ax, cmap='terrain', vmin=700, vmax=1800,
+#                             #    add_colorbar=False if i<2 else True, # only add colorbar to the last subplot
+#                             cbar_kwargs={'fraction':0.04, 'label':'DEM (m)'} )#if i == 2 else None) # only add colorbar to the last subplot
     
-    gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
-    gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
-    ax.set_aspect('equal') #
-    ax.set_axis_off()
-    ax.set_title(f"DEM {ds_hofsj_dem_50m.time.values[i]}")
-plt.tight_layout()
+#     gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
+#     gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
+#     ax.set_aspect('equal') #
+#     ax.set_axis_off()
+#     ax.set_title(f"DEM {ds_hofsj_dem_50m.time.values[i]}")
+# plt.tight_layout()
 
-#%%
+''' ### HOFSJOKUL BEDROCK '''
 da_hofsj_bedrock = xr.open_dataset(os.path.join(data_dir,'06_Hofsjokull/Hofsjokull_bedrock/Ho-botn-land-1983-gert2026-200x200.tif'), engine='rasterio'
                                    ).isel(band=0).drop_vars('band').rename({'band_data':'bedrock'})['bedrock']
-# assert da_hofsj_bedrock.rio.crs == da_hofsj_2013.rio.crs, f"CRS should match between bedrock and DEM; are {da_hofsj_bedrock.rio.crs} and {da_hofsj_2013.rio.crs}"
-print(da_hofsj_bedrock.rio.crs, da_hofsj_bedrock.rio.resolution())
-da_hofsj_bedrock.plot.imshow(cmap='terrain')
-
 da_hofsj_bedrock_50m = reproject_match_grid(ds_hofsj_dem_50m['DEM'], da_hofsj_bedrock, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 
-#%% Hofsjokull THICKNESS
+''' ### HOFSJOKUL THICKNESS '''
 
 da_hofsj_H = ds_hofsj_dem_50m['DEM'] - da_hofsj_bedrock_50m
-fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
-for i, ax in enumerate(axs):
-    da_hofsj_H.isel(time=i
-              ).plot.imshow(ax=ax, cmap='Blues', vmin=0,vmax=500,
-                    #    add_colorbar=False if i<2 else True, # only add colorbar to the last subplot
-                    cbar_kwargs={'fraction':0.04, 'label':'DEM (m)'} )#if i == 2 else None) # only add colorbar to the last subplot
-    
-    gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
-    gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
-    ax.set_aspect('equal') #
-    ax.set_axis_off()
-    ax.set_title(f"Thickness {da_hofsj_H.time.values[i]}")
-plt.tight_layout()
 
-#%%
+# fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
+# for i, ax in enumerate(axs):
+#     da_hofsj_H.isel(time=i
+#               ).plot.imshow(ax=ax, cmap='Blues', vmin=0,vmax=500,
+#                     #    add_colorbar=False if i<2 else True, # only add colorbar to the last subplot
+#                     cbar_kwargs={'fraction':0.04, 'label':'DEM (m)'} )#if i == 2 else None) # only add colorbar to the last subplot
+    
+#     gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
+#     gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
+#     ax.set_aspect('equal') #
+#     ax.set_axis_off()
+#     ax.set_title(f"Thickness {da_hofsj_H.time.values[i]}")
+# plt.tight_layout()
+
 ## average
 da_hofsj_Havg = da_hofsj_H.mean(dim='time')
 ## clip to outline
@@ -152,7 +147,7 @@ da_hofsj_Havg.plot.imshow(ax=ax, cmap='Blues', vmin=0, vmax=500, cbar_kwargs={'f
 gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
 gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
+
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',
@@ -172,27 +167,28 @@ ax.set_title('')
 # ## save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Hofsjokull_thickness_avg_50m_clipped.pdf'), bbox_inches='tight')
 
-#%% Hofsjokull ELEVATION CHANGE from DEM change
+''' ------------------
+### HOFSJOKUL ELEVATION CHANGE from DEM change
+---------------------- '''
+
 ds_hofsj_dem_50m = ds_hofsj_dem_50m.rio.clip(gdf_hofsj_union.geometry, gdf_hofsj_union.crs, drop=False) # clip to union of all outlines to have the same grid for all DEMs and avoid nans outside the outline
 da_hofsj_dhdt_1320 =(ds_hofsj_dem_50m['DEM'].sel(time=2020) - ds_hofsj_dem_50m['DEM'].sel(time=2013)) / (2020-2013)
 da_hofsj_dhdt_1323 = (ds_hofsj_dem_50m['DEM'].sel(time=2023) - ds_hofsj_dem_50m['DEM'].sel(time=2013)) / (2023-2013)
 da_hofsj_dhdt_2023 = (ds_hofsj_dem_50m['DEM'].sel(time=2023) - ds_hofsj_dem_50m['DEM'].sel(time=2020)) / (2023-2020)
 da_hofsj_dhdt = xr.concat([da_hofsj_dhdt_1320, da_hofsj_dhdt_1323, da_hofsj_dhdt_2023], dim='time').assign_coords(time=['2013-2020', '2013-2023', '2020-2023'])
 
-# da_hofsj_dhdt.plot.imshow(cmap='RdBu', col='time', col_wrap=3, vmin=-8, vmax=8, cbar_kwargs={'fraction':0.02, 'label':'Elevation change (m/yr)'})
-
-da_plot = da_hofsj_dhdt.copy()
-fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
-for i, ax in enumerate(axs):
-    da_plot.isel(time=i
-              ).plot.imshow(ax=ax, cmap='RdBu', vmin=-4, vmax=4,
-                cbar_kwargs={'fraction':0.04, 'label':'Elevation change (m/yr)'} )#if i == 2 else None) # only add colorbar to the last subplot
-    gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
-    gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
-    ax.set_aspect('equal') #
-    ax.set_axis_off()
-    ax.set_title(f"dH/dt {da_plot.time.values[i]}")
-plt.tight_layout()
+# da_plot = da_hofsj_dhdt.copy()
+# fig, axs = plt.subplots(figsize=(15,9), ncols=3, sharex=True, sharey=True)
+# for i, ax in enumerate(axs):
+#     da_plot.isel(time=i
+#               ).plot.imshow(ax=ax, cmap='RdBu', vmin=-4, vmax=4,
+#                 cbar_kwargs={'fraction':0.04, 'label':'Elevation change (m/yr)'} )#if i == 2 else None) # only add colorbar to the last subplot
+#     gdf_hofsj.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1)
+#     gdf_hofsj_union.boundary.plot(ax=ax, color='black', linewidth=2)
+#     ax.set_aspect('equal') #
+#     ax.set_axis_off()
+#     ax.set_title(f"dH/dt {da_plot.time.values[i]}")
+# plt.tight_layout()
 
 da_hofsj_dhdt_avg = da_hofsj_dhdt.mean(dim='time')
 
@@ -224,7 +220,9 @@ ax.set_title('')
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Hofsjokull_dhdt_2013-2023_50m_clipped.pdf'), bbox_inches='tight')
 
 
-#%% Hofsjokull VELOCITIES
+''' ------------------
+### HOFSJOKUL VELOCITIES  
+----------------------'''
 ## 100 m resolution; in METER / DAY; need to convert to m/yr by multiplying by 365.25
 
 filelist_velo_hofsj = sorted([f for f in os.listdir(os.path.join(data_dir,'06_Hofsjokull/Hofsjokull_velocities/')) if f.endswith('.tif')])
@@ -250,67 +248,59 @@ print('CRS of Hofsjokull velocity files:', ds_hofsj_vx.rio.crs)
 ## calculate velocity magnitude
 da_hofsj_v = (np.sqrt(ds_hofsj_vx['vx']**2 + ds_hofsj_vy['vy']**2)*365.25).rename('velocity')
 
-## plot
+## plot velocity for all years
 da_hofsj_v.plot.imshow(cmap='viridis', col='time', col_wrap=4, vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
 ## get axes
 axs = plt.gcf().axes[:-1] # exclude colorbar axis
 [gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
 [ax.set_axis_off() for ax in axs]
 
-# ds_hofsj_vx['vx'].plot.imshow(cmap='viridis', col='time', col_wrap=4, vmin=-100, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Easting velocity (m/yr)'})
-#%%
+
 ## smooth data with spatial rolling window to reduce noise
 da_hofsj_v_smooth_median = da_hofsj_v.rolling(x=10, y=10, center=True).median()
 
 ## plot
 da_hofsj_H_100m = reproject_match_grid(da_hofsj_v, da_hofsj_Havg, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
-# da_thickness = da_hofsj_H_100m.copy(data = np.ones_like(da_hofsj_H_100m) * 100 )# uniform scaling field for exponential filter, fake thickness 
-da_thickness = da_hofsj_H_100m.copy()
-Nlength = 1
-da_hofsj_v_smooth_exp = myf.exp_smooth_numba(da_hofsj_v.isel(time=-1), da_thickness, Nlength, 
-                     kernel_scale=None, min_ksize=2, max_ksize=10,
-                     verbose=False)
 
-fig,axs=plt.subplots(1,3, figsize=(15,5))
-ax=axs[0]; 
-da_hofsj_v.isel(time=-1).plot.imshow(ax=ax, cmap='viridis', vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-ax.set_title(f'raw velocity ({da_hofsj_v.isel(time=-1).time.values})')
-ax=axs[1];
-da_hofsj_v_smooth_exp.plot.imshow(ax=ax, cmap='viridis', vmin=0, vmax=100, 
-                               cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-ax.set_title(f'exponential filter ({da_hofsj_v.isel(time=-1).time.values})')
-ax=axs[2]; 
-da_hofsj_v_smooth_median.isel(time=-1).plot.imshow(ax=ax,cmap='viridis', vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Smoothed velocity (m/yr)'})
-ax.set_title(f'median filter ({da_hofsj_v.isel(time=-1).time.values})')
-[ax.set_aspect('equal') for ax in axs]
-[ax.set_axis_off() for ax in axs]
-[gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
+## exponential filter using local ice thickness to determine filter size
+# da_thickness = da_hofsj_H_100m.copy()
+# Nlength = 1
+# da_hofsj_v_smooth_exp = myf.exp_smooth_numba(da_hofsj_v.isel(time=-1), da_thickness, Nlength, 
+#                      kernel_scale=None, min_ksize=2, max_ksize=10,
+#                      verbose=False)
 
-#%% Hofsjokul -- plot velocity after exponential smoothing AND average
+# fig,axs=plt.subplots(1,3, figsize=(15,5))
+# ax=axs[0]; 
+# da_hofsj_v.isel(time=-1).plot.imshow(ax=ax, cmap='viridis', vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# ax.set_title(f'raw velocity ({da_hofsj_v.isel(time=-1).time.values})')
+# ax=axs[1];
+# da_hofsj_v_smooth_exp.plot.imshow(ax=ax, cmap='viridis', vmin=0, vmax=100, 
+#                                cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# ax.set_title(f'exponential filter ({da_hofsj_v.isel(time=-1).time.values})')
+# ax=axs[2]; 
+# da_hofsj_v_smooth_median.isel(time=-1).plot.imshow(ax=ax,cmap='viridis', vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Smoothed velocity (m/yr)'})
+# ax.set_title(f'median filter ({da_hofsj_v.isel(time=-1).time.values})')
+# [ax.set_aspect('equal') for ax in axs]
+# [ax.set_axis_off() for ax in axs]
+# [gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
 
-da_list = []
-for y in da_hofsj_v.time.values:
-    da_hofsj_v_smooth_exp = myf.exp_smooth_numba(da_hofsj_v.sel(time=y), da_hofsj_H_100m, Nlength, 
-                     kernel_scale=None, min_ksize=2, max_ksize=10,
-                     verbose=False)
-    da_list.append(da_hofsj_v_smooth_exp)
-da_hofsj_v_smoothed = xr.concat(da_list, dim='time').assign_coords(time=da_hofsj_v.time.values)
+'''#% Hofsjokul -- plot velocity after exponential smoothing AND average'''
 
-# da_hofsj_v_smoothed.plot.imshow(cmap='viridis', vmin=0, vmax=100, col='time', col_wrap=4, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# da_list = []
+# for y in da_hofsj_v.time.values:
+#     da_hofsj_v_smooth_exp = myf.exp_smooth_numba(da_hofsj_v.sel(time=y), da_hofsj_H_100m, Nlength, 
+#                      kernel_scale=None, min_ksize=2, max_ksize=10,
+#                      verbose=False)
+#     da_list.append(da_hofsj_v_smooth_exp)
+# da_hofsj_v_smoothed = xr.concat(da_list, dim='time').assign_coords(time=da_hofsj_v.time.values)
 
 ## temporal average
-da_hofsj_v_smoothed_avg = da_hofsj_v_smoothed.mean(dim='time', skipna=True)
+# da_hofsj_v_smoothed_avg = da_hofsj_v_smoothed.mean(dim='time', skipna=True)
 ## select only few years that seem similar
-da_hofsj_v_smoothed_avg_1723 = da_hofsj_v_smoothed.sel(time=[2017,2019,2020,2023]).mean(dim='time', skipna=True)
-
-# fig,ax=plt.subplots(figsize=(10,8))
-# da_hofsj_v_smoothed_avg.plot.imshow(ax=ax,
-#                    cmap='viridis', 
-#                 #    cmap=cm.tokyo,
-#                    vmin=0, vmax=100, 
-#                    cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-# ax.set_title('average velocity (after exp.smooth)')
-# ax.set_axis_off()
+# da_hofsj_v_smoothed_avg_1723 = da_hofsj_v_smoothed.sel(time=[2017,2019,2020,2023]).mean(dim='time', skipna=True)
+da_hofsj_v_smoothed_avg = da_hofsj_v_smooth_median.mean(dim='time', skipna=True) # compare with median filter
+## select only few years that seem similar
+da_hofsj_v_smoothed_avg_1723 = da_hofsj_v_smooth_median.sel(time=[2017,2019,2020,2023]).mean(dim='time', skipna=True)
 
 ## save the velocity field with the selected years
 
@@ -341,10 +331,10 @@ ax.set_title('')
 # if not os.path.exists(os.path.dirname(filename)):
 #     da_hofsj_v_smoothed_avg_1723.rio.to_raster(filename)
 # ## save as img (pdf) for poster
-fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Hofsjokull_v_smoothed_avg_1723_clipped.pdf'), bbox_inches='tight')
+# fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Hofsjokull_v_smoothed_avg_1723_clipped.pdf'), bbox_inches='tight')
 
 
-#%% 
+#%% GEPATSCHFERNER
 '''# ########################################
 # GEPATSCH
 Outlines EPSG 25832
@@ -355,7 +345,6 @@ Outlines EPSG 25832
 
 #########################################
 '''
-import pandas as pd
 
 files_gepatsch = sorted(os.listdir(os.path.join(data_dir,'11_Gepatschferner/')))
 f_outlines_gep = sorted([f for f in files_gepatsch if 'outline' in f])
@@ -417,11 +406,8 @@ for idx, row in gdf_gepatsch.iterrows():
     )
 
     label_point = row.geometry.representative_point()
-    # ax.text(label_point.x, label_point.y, row['year'], fontsize=9, ha='center', va='center')
 ax.legend()
-# gdf_gepatsch_union.boundary.plot(ax=ax, color='black', linewidth=2)
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',
@@ -441,7 +427,9 @@ ax.set_title('')
 # ## save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Gepatschferner_dhdt_2006-2018_5m_clipped.pdf'), bbox_inches='tight')
 
-#%% GEpatsch THIKNESS
+''' ------------------
+### GEpatsch THIKNESS
+----------------------'''
 
 
 fig,ax=plt.subplots(figsize=(15,10))
@@ -472,7 +460,6 @@ for idx, row in gdf_gepatsch.iterrows():
 ax.legend()
 # gdf_gepatsch_union.boundary.plot(ax=ax, color='black', linewidth=2)
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',
@@ -492,8 +479,9 @@ ax.set_title('')
 # ## save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Gepatschferner_H_2006-2018_5m_clipped.pdf'), bbox_inches='tight')
 
-#%% velocity from Millan
-
+''' ------------------
+### GEpatsch VELOCITY from Millan
+----------------------'''
 da_millan_v = xr.open_dataset(
     os.path.join('/Users/mizeboud/Documents/Data_iCloud/',
                  'SMB2D/GlobalGlacierVelocity_Millan2022/RGI-11/',
@@ -508,7 +496,6 @@ da_gepatsch_v = reproject_match_grid(da_gepatsch_H, da_millan_v, resample_method
 da_gepatsch_v = da_gepatsch_v.rio.clip(gdf_gepatsch.loc[gdf_gepatsch['year']=='1997'].geometry, gdf_gepatsch.crs, drop=False)   
 # da_gepatsch_v.plot.imshow(cmap='viridis', vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
 
-#%% PLOT VELOCITY GEPTATSCH
 
 fig,ax=plt.subplots(figsize=(15,10))
 
@@ -535,11 +522,8 @@ for idx, row in gdf_gepatsch.iterrows():
     )
 
     label_point = row.geometry.representative_point()
-    # ax.text(label_point.x, label_point.y, row['year'], fontsize=9, ha='center', va='center')
 ax.legend()
-# gdf_gepatsch_union.boundary.plot(ax=ax, color='black', linewidth=2)
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',
@@ -557,10 +541,9 @@ ax.set_title('')
 # if not os.path.exists(os.path.dirname(filename)):
 #     da_gepatsch_v.rio.to_raster(filename)
 # ## save as img (pdf) for poster
-fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Gepatschferner_velo-millan_5m_clipped.pdf'), bbox_inches='tight')
+# fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Gepatschferner_velo-millan_5m_clipped.pdf'), bbox_inches='tight')
 
 #%% ALETSCH
-
 '''# ########################################
 # ALETSCH
 Outlines EPSG 
@@ -576,7 +559,6 @@ Outlines EPSG
 
 #########################################
 '''
-import geopandas as gpd
 swiss_2056_crs = 'EPSG:2056' # Swiss national grid, in meters; used for DEM and dhdt
 
 # load RGI outlines
@@ -613,7 +595,7 @@ da_aletsch_velo = da_aletsch_velo * 365.25
 da_aletsch_velo = da_aletsch_velo.rio.clip(gdf_aletsch.geometry, gdf_aletsch.crs, drop=True)
 da_aletsch_dhdt = da_aletsch_dhdt.rio.clip(gdf_aletsch.geometry, gdf_aletsch.crs, drop=True)
 
-#%%
+
 ## downsample to 50m for plot pdf
 ## create dummy grid with 50m resolution and same extent as da_aletsch_dhdt
 xvals = np.arange(da_aletsch_dhdt.rio.bounds()[0], da_aletsch_dhdt.rio.bounds()[2], 50)
@@ -628,7 +610,9 @@ da_aletsch_50m_dummy.rio.write_crs(swiss_2056_crs, inplace=True)
 da_aletsch_velo_50m = reproject_match_grid(da_aletsch_50m_dummy, da_aletsch_velo, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 da_aletsch_dhdt_50m = reproject_match_grid(da_aletsch_50m_dummy, da_aletsch_dhdt, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 
-#%% ALETSCH VELOCITY
+''' ------------------
+### ALETSCH VELOCITY 
+----------------------'''
 
 fig,ax=plt.subplots(figsize=(15,10))
 da_aletsch_velo_50m.plot.imshow(ax=ax, 
@@ -638,7 +622,6 @@ da_aletsch_velo_50m.plot.imshow(ax=ax,
 gdf_aletsch.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1)
 
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
@@ -651,10 +634,13 @@ ax.set_axis_off(); ax.set_title('')
 # if not os.path.exists(os.path.dirname(filename)):
 #     da_aletsch_velo.rio.to_raster(filename)
 ## save as img (pdf) for poster
-fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Aletsch_velo_median-2011-2019_clipped.pdf'), bbox_inches='tight')
+# fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Aletsch_velo_median-2011-2019_clipped.pdf'), bbox_inches='tight')
 
 
-#%% ALETSCH dhdt
+
+''' ------------------
+### ALETSCH DHDT 
+----------------------'''
 
 fig,ax=plt.subplots(figsize=(15,10))
 da_aletsch_dhdt_50m.plot.imshow(ax=ax, 
@@ -665,7 +651,6 @@ da_aletsch_dhdt_50m.plot.imshow(ax=ax,
 gdf_aletsch.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1)
 
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
@@ -683,7 +668,11 @@ ax.set_title('')
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Aletsch_dhdt_2017-2023_clipped.pdf'), bbox_inches='tight')
 
 
-#%% ALETSCH THICKNESS
+
+''' ------------------
+### ALETSCH THICKNESS  
+----------------------'''
+
 gdf_aletsch_thickness = gpd.read_file(os.path.join(data_dir, '11_Aletsch/',
                 'aletsch_h_multidate.shp'))
 print('CRS of Aletsch thickness shapefile:', gdf_aletsch_thickness.crs)
@@ -698,8 +687,6 @@ print('CRS of Aletsch thickness file:', da_aletsch_H.rio.crs)
 da_aletsch_H = reproject_match_grid(da_aletsch_dhdt, da_aletsch_H, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 da_aletsch_H_50m = reproject_match_grid(da_aletsch_50m_dummy, da_aletsch_H, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 
-from shapely.geometry import LineString 
-import pandas as pd
 
 ## make gdf of profiles a line instead of points, grouping by prf_id, getting x and y from POINT in geometry
 ## add column with x annd y coordinates from geometry points
@@ -719,9 +706,7 @@ gdf_aletsch_thickness.plot(ax=ax,column='thk',
                            edgecolor=None, #linewidth=0.5,
                            legend=True, legend_kwds={'label':'Thickness (m)'}  )
 gdf_aletsch.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1)
-
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
                     )
@@ -739,7 +724,6 @@ ax.set_title('')
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Aletsch_H-grid_clipped.pdf'), bbox_inches='tight')
 
 #%% ZONGO
-
 '''# ########################################
 # ZONGO
 - Outlines EPSG : 2006 & 2013
@@ -753,7 +737,6 @@ ax.set_title('')
 
 #########################################
 '''
-import pandas as pd 
 
 gdf_2006 = gpd.read_file(os.path.join(data_dir,'16_Zongo/Zongo_Outline-2006.shp'))
 gdf_2013 = gpd.read_file(os.path.join(data_dir,'16_Zongo/Zongo_Outline-2013.shp'))
@@ -768,8 +751,6 @@ da_zongo_dem2006 = xr.open_dataset(os.path.join(data_dir,'16_Zongo/Zongo_DEM_200
                 ).isel(band=0).drop_vars('band').rename({'band_data':'dem'})['dem']   
 da_zongo_dem2013 = xr.open_dataset(os.path.join(data_dir,'16_Zongo/Zongo_DEM_2013.tif'), engine='rasterio'
                 ).isel(band=0).drop_vars('band').rename({'band_data':'dem'})['dem']   
-
-
 
 da_zongo_vx = xr.open_dataset(os.path.join(data_dir, '16_Zongo/Zongo_velx_2017-18.tif'), engine='rasterio'
                 ).isel(band=0).drop_vars('band').rename({'band_data':'vx'})['vx']   
@@ -788,7 +769,7 @@ df_zongo_H = pd.read_csv(os.path.join(data_dir, '16_Zongo/Zongo_h-InSitu_2012080
 gdf_zongo_H = gpd.GeoDataFrame(df_zongo_H, geometry=gpd.points_from_xy(df_zongo_H['longitude'], df_zongo_H['latitude']), crs='EPSG:4326')
 gdf_zongo_H.to_crs(da_zongo_dhdt.rio.crs, inplace=True)
 
-## verything to 50m resolution
+## everything to 50m resolution
 # da_zongo_dhdt = reproject_match_grid(da_zongo_vx, da_zongo_dhdt, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 
 ## dhdt zongo: to m/yr
@@ -802,7 +783,10 @@ da_zongo_vx = da_zongo_vx.rio.clip(gdf_2006.geometry, gdf_2006.crs, drop=True)
 da_zongo_vy = da_zongo_vy.rio.clip(gdf_2006.geometry, gdf_2006.crs, drop=True)   
 da_zongo_H_millan = da_zongo_H_millan.rio.clip(gdf_2006.geometry, gdf_2006.crs, drop=True)   
 da_zongo_v = da_zongo_v.rio.clip(gdf_2006.geometry, gdf_2006.crs, drop=True)    
-#%% THICKNESS
+
+''' ------------------
+### ZONGO THICKNESS 
+----------------------'''
 plt.rcParams.update({'font.size': 12})
 
 fig,ax=plt.subplots(figsize=(15,10))
@@ -821,7 +805,6 @@ gdf_2006.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1, label='2
 gdf_2013.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1, label='2013')
 
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
                     )
@@ -838,7 +821,10 @@ ax.legend()
 # ## save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Zongo_H_clipped.pdf'), bbox_inches='tight')
 
-#%% ZONGO DHDT
+
+''' ------------------
+### ZONGO VELOCITY from Millan 
+----------------------'''
 
 fig,ax=plt.subplots(figsize=(15,10))
 da_zongo_v.plot.imshow(ax=ax, 
@@ -850,7 +836,6 @@ gdf_2006.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1.2, label=
 gdf_2013.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1.2, label='2013')
 
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
                     )
@@ -867,7 +852,10 @@ ax.legend()
 # ## save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Zongo_v-millan_clipped.pdf'), bbox_inches='tight')
 
-#%% Zongo dhdt
+
+''' ------------------
+### ZONGO DHDT 
+----------------------'''
 
 # dhdt_dem = da_zongo_dem2013 - da_zongo_dem2006
 # dhdt_dem.plot.imshow(cmap='RdBu', vmin=-20, vmax=20, cbar_kwargs={'fraction':0.02, 'label':'Elevation change (m/yr)'})
@@ -880,9 +868,7 @@ da_zongo_dhdt.plot.imshow(ax=ax,
 
 gdf_2013.boundary.plot(ax=ax,linestyle='--', color='black', linewidth=1.2, label='2013')
 gdf_2006.boundary.plot(ax=ax,linestyle='-', color='black', linewidth=1.2, label='2006')
-
 ## add scalebar
-from matplotlib_scalebar.scalebar import ScaleBar
 scalebar=ScaleBar(dx=1, # size of pixel
                     units='m',
                     location='lower left',scale_loc='top',box_alpha=0.5,# fontsize=14
@@ -899,5 +885,3 @@ ax.legend()
 # da_zongo_dhdt.rio.to_raster(filename)
 # # save as img (pdf) for poster
 # fig.savefig(os.path.join(homedir,'26-EGUposter/figures/Zongo_dhdt_2006-2013_25m_clipped.pdf'), bbox_inches='tight')
-
-# %%
