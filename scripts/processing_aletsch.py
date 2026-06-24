@@ -205,7 +205,89 @@ da_dhdt_calc.plot.imshow(ax=axs[1], vmin=-20, vmax=20, cmap='RdBu_r'); axs[1].se
 da_dhdt_diff.plot.imshow(ax=axs[2], vmin=-5, vmax=5, cmap='RdBu_r'); axs[2].set_title('Difference')
 plt.close() 
 
+#%%
 
+''' ##################################
+Elevation bins
+--> 50 m
+--> based on earliest DEM if multiple available (assuming glacier is retreating, so earliest DEM has highest elevations)
+##################################
+'''
+
+def dicretize_elevation_bins(da_elev, hmin=None, hmax=None, binstep=100):
+    ''' Discretize elevation data into bins of specified step size. 
+    Parameters:
+    - da_elev: xarray DataArray of elevation data
+    - hmin: minimum elevation. Will be rounded down to nearest binstep. If not specified, will be taken from da_elev.
+    - hmax: maximum elevation. Will be rounded down to nearest binstep. If not specified, will be taken from da_elev.
+    - binstep: step size for elevation bins (default: 100 m)
+    
+    Returns:
+    - da_discretized: xarray DataArray with discretized elevation values
+    - elev_bins: array of elevation bin edges (left edges). 
+                The last value is still left-edge of the last bin, 
+                so full captured elevation range extents to bin[-1]+binstep
+    '''
+    if hmin is None:
+        hmin = da_elev.min().item() 
+    if hmax is None:
+        hmax = da_elev.max().item()
+    hmin = np.floor(hmin/ binstep) * binstep
+    hmax = np.ceil(hmax / binstep) * binstep
+
+    # create bins from hmin to hmax
+    elev_bins = np.arange(hmin, hmax + binstep, step=binstep) 
+    # include right edge for last bin, needed for groupby_bins to include the last bin
+    elev_bin_edges_inclRight = np.concatenate((elev_bins, [elev_bins[-1] + binstep])) 
+
+    # Apply binning using groupby_bins and calculate mean for each bin
+    bin_means_data = da_elev.groupby_bins(
+        group=da_elev,
+        bins=elev_bin_edges_inclRight,
+        right=True,
+        include_lowest=True
+    ).mean().values
+
+    # Get bin index for each pixel in the dataArray
+    da_elev_bin_idx = xr.apply_ufunc(
+        np.digitize,
+        da_elev,
+        elev_bins,
+        kwargs={'right': True}
+    )
+
+    # Replace each bin index with its corresponding bin edge value
+    da_discretized = xr.apply_ufunc(
+        np.vectorize(lambda idx: elev_bin_edges_inclRight[idx]),
+        da_elev_bin_idx
+    ).where(~np.isnan(da_elev)) # retain NaN values where original data was NaN
+
+    ## add attributes
+    attrs = {'description': f'Discretized elevation values into bins of {binstep} m. Using lowest (left-edge) value for each bin.',
+            'long_name': 'Elevation bin location',
+            'name': 'elevation_bins',
+             'bin_step': binstep,
+             'bin_left_edges': elev_bins.tolist(),
+             'units': 'm'}
+    da_discretized.attrs = attrs
+
+    return da_discretized, elev_bins
+
+## multiple DEMs: use first to do the binning, but use the min-max range of both to define bin range
+hmin = np.min([da_dem17.min().item(), da_dem23.min().item()]) 
+hmax = np.max([da_dem17.max().item(), da_dem23.max().item()]) 
+da_elev_bins, elev_bin_edges = dicretize_elevation_bins(da_dem17, 
+                                                     hmin=hmin, hmax=hmax,
+                                                     binstep=50)
+
+
+## save to CLEAN directory
+fname = 'aletsch_elev-bins.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    da_elev_bins.rename('elevation_bins').rio.to_raster(os.path.join(path2data_clean, fname))
+
+
+#%%
 ''' ##################################
 Bedrock
 ##################################
@@ -231,7 +313,7 @@ if not os.path.exists(os.path.join(path2data_clean, fname_bedr)):
 else:
     print(f"File {fname_bedr} already exists in cleaned data directory. Skipping save.")
     
-
+#%%
 ''' ##################################
 Velocity data
 ##################################
@@ -272,7 +354,6 @@ da_vx_stdev_myear.attrs['description'] = 'standard deviation of ice velocity (20
 da_vy_stdev_myear.attrs = attrs_velo_4326
 da_vy_stdev_myear.attrs['long_name'] = 'surface ice velocity (y-component) standard deviation'
 da_vy_stdev_myear.attrs['description'] = 'standard deviation of ice velocity (2011-2019)'
-
 
 
 with warnings.catch_warnings():
@@ -443,7 +524,7 @@ da_outline_mask = (da_outline_mask.copy()
 
 # DEM and Bedrock: should not have NaN values 
 if da_dem17.isnull().any():
-    raise ValueError("DEM has NaN values, cannot assign nodata value of 0.")
+    raise ValueError("DEM has NaN values.")
 else: da_dem_10m = (da_dem17.copy()
                 .rename('DEM') 
                 .assign_attrs({'long_name':'Elevation',
@@ -520,9 +601,21 @@ da_vy_10m = (da_vy_10m.fillna(0).copy()
                 .rio.write_crs('EPSG:2056')
 )
 
+da_elev_bins_10m = (da_elev_bins.copy()
+                   .rename('elevation_bins')
+                   .assign_attrs({'long_name':'Elevation Bins',
+                                  'units':'m',
+                                  'crs':'EPSG:2056',
+                                  'timestamp':'20170901',
+                                  'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin.'
+                                  })
+                    .rio.write_crs('EPSG:2056')
+)
+
 
 da_var_list = [ da_bedrock_10m,
                 da_dem_10m, 
+                da_elev_bins_10m,
                 da_thickness_10m,
                 da_dhdt_10m,
                 da_vx_10m,
