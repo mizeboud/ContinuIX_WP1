@@ -9,10 +9,11 @@ import os
 import matplotlib.pyplot as plt
 import rasterio as rio
 import rioxarray #  activates .rio accessor of xarray
+import warnings
 
-path2data_raw = '../../ContinuIX_WP1_data/Data_Package/01_raw_data/Aletsch/'
-path2data_clean = '../../ContinuIX_WP1_data/Data_Package/02_cleaned_data/Aletsch/'
-path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_experiment_package/Aletsch/'
+path2data_raw = '../../ContinuIX_WP1_data/Data_Package/01_submitted_data/Aletsch/'
+path2data_clean = '../../ContinuIX_WP1_data/Data_Package/02_raw-cleaned_data/Aletsch/'
+path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_homogenized_data/Aletsch/'
 
 #%% FUnctions
 
@@ -35,6 +36,119 @@ def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampl
     })
     
     return img_repr_match.transpose(*dims) # transpose dimension order back to original
+
+
+def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m'):
+    ''' Create a regular dummy grid with specified resolution and CRS, based on the extent of the input dataset/dataArray. 
+    This can be used as a reference grid for reprojecting/matching other datasets. 
+    Parameters:
+    - ds: xarray Dataset or DataArray to define the extent of the grid
+    - grid_res: desired grid resolution (in the same units as the CRS, e.g., meters)
+    - crs: desired coordinate reference system (default: same as input dataset)
+    - unit: unit of the grid resolution (default: 'm' for meters)
+    '''
+    if not crs:
+        crs = ds.rio.crs
+    x0 = ds.x.min().item() ; x1 = ds.x.max().item() ; y0 = ds.y.min().item() ; y1 = ds.y.max().item()
+    # x0 = np.floor(x0/grid_res)*grid_res; x1 = np.floor(x1/grid_res)*grid_res; 
+    # y0 = np.floor(y0/grid_res)*grid_res; y1 = np.floor(y1/grid_res)*grid_res
+    x_seq = np.arange(x0, x1+grid_res, step=grid_res )
+    y_seq = np.arange(y0, y1+grid_res, step=grid_res )
+
+    ## check if y_seq is decreasing (as in EPSG:2056) and reverse if needed
+    if ds.rio.resolution()[1] < 0: # if y resolution is negative, then y_seq should be decreasing
+        y_seq = y_seq[::-1]
+
+    ## get floating point presicion of grid_res, and apply that to x0 
+    # (e.g. if x0 is at 0.0730001 and grid_res is 0.08, then start xgrid at 287.00 instead of 287.0000000001)
+    decimal_places = int(-np.floor(np.log10(grid_res)))
+    ## round the sequences to avoid floating point precision issues (e.g. if x_seq is [287.00, 287.08, 287.16, ...] but due to floating point precision it is actually [287.0000000001, 287.0800000001, 287.1600000001, ...], then round to 2 decimal places to get rid of the tiny differences)
+    x_seq = np.round(x_seq, decimal_places)
+    y_seq = np.round(y_seq, decimal_places)
+
+    grid_dummy = xr.DataArray(
+        data=np.ones( (len(y_seq), len(x_seq)) ),
+        dims=["y", "x"],
+        coords=dict(
+            y=y_seq,
+            x=x_seq,
+        ),
+        attrs=dict(
+            description=f"regular grid at {grid_res} {unit} resolution",
+            unit=unit,
+        ),
+    ).rio.write_crs(crs)
+    
+    return grid_dummy
+
+
+# -----------------------------
+# Function to rotate vectors
+# -----------------------------
+def transform_velocity_components_epsg4326_to_epsg2056(da_vx, da_vy, 
+                                                       src_epsg="4326", dst_epsg="2056"):
+    """
+    Convert velocity components from geographic east/north components
+    to EPSG:2056 x/y components.
+
+    velocity can be in m/day or m/year, as long as the spatial unit is in meters
+
+    For each velocity pixel:
+    1. Take the pixel center coordinate in lon/lat.
+    2. Use the velocity vector to define a small displacement over one year:
+        point_1 = lon/lat position
+        point_2 = point_1 shifted by ve, vn in metres
+    3. Transform both points to EPSG:2056.
+        vx_2056 = x2 - x1
+        vy_2056 = y2 - y1
+    """
+    from pyproj import CRS, Transformer, Geod
+
+    src_crs = CRS.from_epsg(src_epsg)
+    dst_crs = CRS.from_epsg(dst_epsg)
+
+    transformer = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
+    geod = Geod(ellps="WGS84")
+
+    # Get lon/lat coordinate grids
+    lon = da_vx["x"].values
+    lat = da_vx["y"].values
+    lon2d, lat2d = np.meshgrid(lon, lat)
+
+    vx = da_vx.values
+    vy = da_vy.values
+
+    # Velocity magnitude and azimuth in geographic coordinates
+    speed = np.sqrt(vx**2 + vy**2)
+
+    # pyproj.Geod uses azimuth clockwise from north:
+    # eastward vx, northward vy -> azimuth = atan2(east, north)
+    azimuth = np.degrees(np.arctan2(vx, vy))
+
+    # Create a second point after moving by the velocity distance. 
+    # Speed: spatial unit should be in meters (doesnt matter if its m/day or m/year)
+    lon_end, lat_end, _ = geod.fwd(lon2d, lat2d, azimuth, speed)
+
+    # Project start and end points to EPSG:2056
+    x0, y0 = transformer.transform(lon2d, lat2d)
+    x1, y1 = transformer.transform(lon_end, lat_end)
+
+    # Difference gives velocity components in EPSG:2056
+    vx_2056 = x1 - x0
+    vy_2056 = y1 - y0
+
+    # Preserve NaNs
+    mask = np.isnan(vx) | np.isnan(vy)
+    vx_2056[mask] = np.nan
+    vy_2056[mask] = np.nan
+
+    da_vx_rot = da_vx.copy(data=vx_2056).rename("vx_2056")
+    da_vy_rot = da_vy.copy(data=vy_2056).rename("vy_2056")
+
+    da_vx_rot = da_vx_rot.rio.write_crs("EPSG:4326")
+    da_vy_rot = da_vy_rot.rio.write_crs("EPSG:4326")
+
+    return da_vx_rot, da_vy_rot
 
 
 #%% Step 0: Check submitted (raw) data
@@ -118,7 +232,6 @@ else:
     print(f"File {fname_bedr} already exists in cleaned data directory. Skipping save.")
     
 
-
 ''' ##################################
 Velocity data
 ##################################
@@ -138,91 +251,55 @@ da_vy_myear = da_vy * 365.25
 da_vx_stdev_myear = da_vx_stdev * 365.25
 da_vy_stdev_myear = da_vy_stdev * 365.25
 
-## save to CLEAN directory
-fname_vx = 'aletsch_vx_EPSG4326.tif'
-fname_vy = 'aletsch_vy_EPSG4326.tif'
-if not os.path.exists(os.path.join(path2data_clean, fname_vx)):
-    da_vx_myear.rio.to_raster(os.path.join(path2data_clean, fname_vx))
-    da_vy_myear.rio.to_raster(os.path.join(path2data_clean, fname_vy))
-else:
-    print(f"File {fname_vx} already exists in cleaned data directory. Skipping save.")
-fname_vx_stdev = 'aletsch_vx_stddev_EPSG4326.tif'
-fname_vy_stdev = 'aletsch_vy_stddev_EPSG4326.tif'
-if not os.path.exists(os.path.join(path2data_clean, fname_vx_stdev)):
-    da_vx_stdev_myear.rio.to_raster(os.path.join(path2data_clean, fname_vx_stdev))
-    da_vy_stdev_myear.rio.to_raster(os.path.join(path2data_clean, fname_vy_stdev))
+
+### Save cleaned velocity data to CLEAN directory
+
+## write attributes / clear existing
+attrs_velo_4326 = {
+              'units':'m/year',
+              'crs':'EPSG:4326',
+              'timestamp':'2011-2019',
+              'description':'median velocity over 2011-2019.'
+             }
+
+da_vx_myear.attrs = attrs_velo_4326
+da_vx_myear.attrs['long_name'] = 'surface ice velocity (x-component)'
+da_vy_myear.attrs = attrs_velo_4326
+da_vy_myear.attrs['long_name'] = 'surface ice velocity (y-component)'
+da_vx_stdev_myear.attrs = attrs_velo_4326
+da_vx_stdev_myear.attrs['long_name'] = 'surface ice velocity (x-component) standard deviation'
+da_vx_stdev_myear.attrs['description'] = 'standard deviation of ice velocity (2011-2019)'
+da_vy_stdev_myear.attrs = attrs_velo_4326
+da_vy_stdev_myear.attrs['long_name'] = 'surface ice velocity (y-component) standard deviation'
+da_vy_stdev_myear.attrs['description'] = 'standard deviation of ice velocity (2011-2019)'
+
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=".*angle from rectified to skew grid parameter lost in conversion to CF.*",
+        category=UserWarning,
+        module="pyproj.*",
+    )
+
+
+    ## save to CLEAN directory
+    fname_vx = 'aletsch_vx_EPSG4326.tif'
+    fname_vy = 'aletsch_vy_EPSG4326.tif'
+    if not os.path.exists(os.path.join(path2data_clean, fname_vx)):
+        da_vx_myear.rio.to_raster(os.path.join(path2data_clean, fname_vx))
+        da_vy_myear.rio.to_raster(os.path.join(path2data_clean, fname_vy))
+    else:
+        print(f"File {fname_vx} already exists in cleaned data directory. Skipping save.")
+    fname_vx_stdev = 'aletsch_vx_stddev_EPSG4326.tif'
+    fname_vy_stdev = 'aletsch_vy_stddev_EPSG4326.tif'
+    if not os.path.exists(os.path.join(path2data_clean, fname_vx_stdev)):
+        da_vx_stdev_myear.rio.to_raster(os.path.join(path2data_clean, fname_vx_stdev))
+        da_vy_stdev_myear.rio.to_raster(os.path.join(path2data_clean, fname_vy_stdev))
 
 # 2. Reproject the grid definitions using rioxarray
 target_crs = "EPSG:2056"  # Swiss coordinate system
-
-# -----------------------------
-# Function to rotate vectors
-# -----------------------------
-def transform_velocity_components_epsg4326_to_epsg2056(da_vx, da_vy, 
-                                                       src_epsg="4326", dst_epsg="2056"):
-    """
-    Convert velocity components from geographic east/north components
-    to EPSG:2056 x/y components.
-
-    velocity can be in m/day or m/year, as long as the spatial unit is in meters
-
-    For each velocity pixel:
-    1. Take the pixel center coordinate in lon/lat.
-    2. Use the velocity vector to define a small displacement over one year:
-        point_1 = lon/lat position
-        point_2 = point_1 shifted by ve, vn in metres
-    3. Transform both points to EPSG:2056.
-        vx_2056 = x2 - x1
-        vy_2056 = y2 - y1
-    """
-    from pyproj import CRS, Transformer, Geod
-
-    src_crs = CRS.from_epsg(src_epsg)
-    dst_crs = CRS.from_epsg(dst_epsg)
-
-    transformer = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
-    geod = Geod(ellps="WGS84")
-
-    # Get lon/lat coordinate grids
-    lon = da_vx["x"].values
-    lat = da_vx["y"].values
-    lon2d, lat2d = np.meshgrid(lon, lat)
-
-    vx = da_vx.values
-    vy = da_vy.values
-
-    # Velocity magnitude and azimuth in geographic coordinates
-    speed = np.sqrt(vx**2 + vy**2)
-
-    # pyproj.Geod uses azimuth clockwise from north:
-    # eastward vx, northward vy -> azimuth = atan2(east, north)
-    azimuth = np.degrees(np.arctan2(vx, vy))
-
-    # Create a second point after moving by the velocity distance. 
-    # Speed: spatial unit should be in meters (doesnt matter if its m/day or m/year)
-    lon_end, lat_end, _ = geod.fwd(lon2d, lat2d, azimuth, speed)
-
-    # Project start and end points to EPSG:2056
-    x0, y0 = transformer.transform(lon2d, lat2d)
-    x1, y1 = transformer.transform(lon_end, lat_end)
-
-    # Difference gives velocity components in EPSG:2056
-    vx_2056 = x1 - x0
-    vy_2056 = y1 - y0
-
-    # Preserve NaNs
-    mask = np.isnan(vx) | np.isnan(vy)
-    vx_2056[mask] = np.nan
-    vy_2056[mask] = np.nan
-
-    da_vx_rot = da_vx.copy(data=vx_2056).rename("vx_2056")
-    da_vy_rot = da_vy.copy(data=vy_2056).rename("vy_2056")
-
-    da_vx_rot = da_vx_rot.rio.write_crs("EPSG:4326")
-    da_vy_rot = da_vy_rot.rio.write_crs("EPSG:4326")
-
-    return da_vx_rot, da_vy_rot
-
 
 # -----------------------------
 # Rotate velocity components
@@ -244,24 +321,72 @@ da_vy_2056 = da_vy_rot.rio.reproject("EPSG:2056")
 da_vx_stdev_2056 = da_vx_stdev_myear.rio.reproject("EPSG:2056")
 da_vy_stdev_2056 = da_vy_stdev_myear.rio.reproject("EPSG:2056")
 
+
+## resample reprojected velocity to 10 m
+
+da_vx_10m = reproject_match_grid(da_dem17, da_vx_2056, 
+                                 resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_vy_10m = reproject_match_grid(da_dem17, da_vy_2056, 
+                                 resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+
+# -----------------------------
+# Reprojected velocities are 64.17 m resoltuion; 
+# reproject to a regular grid of 60 m.
+# -----------------------------
+da_velo_60m = create_regular_dummy_grid(da_vx_2056, grid_res=60, crs="EPSG:2056", unit='m')
+da_vx_2056 = reproject_match_grid(da_velo_60m, da_vx_2056, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_vy_2056 = reproject_match_grid(da_velo_60m, da_vy_2056, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_vx_stdev_2056 = reproject_match_grid(da_velo_60m, da_vx_stdev_2056, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_vy_stdev_2056 = reproject_match_grid(da_velo_60m, da_vy_stdev_2056, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+
 # -----------------------------
 # Save output
 # -----------------------------
 
-## save to homomgenized directory
-fname_vx = 'aletsch_vx_EPSG2056.tif'
-fname_vy = 'aletsch_vy_EPSG2056.tif'
-if not os.path.exists(os.path.join(path2data_homog, fname_vx)):
-    da_vx_2056.rio.to_raster(os.path.join(path2data_homog, fname_vx))
-    da_vy_2056.rio.to_raster(os.path.join(path2data_homog, fname_vy))
-else:
-    print(f"File {fname_vx} already exists in homogenized data directory. Skipping save.")
-    
-fname_vx_stdev = 'aletsch_vx_stddev_EPSG2056.tif'
-fname_vy_stdev = 'aletsch_vy_stddev_EPSG2056.tif'
-if not os.path.exists(os.path.join(path2data_homog, fname_vx_stdev)):
-    da_vx_stdev_2056.rio.to_raster(os.path.join(path2data_homog, fname_vx_stdev))
-    da_vy_stdev_2056.rio.to_raster(os.path.join(path2data_homog, fname_vy_stdev))
+## write attributes / clear existing
+attrs_velo = {
+              'units':'m/year',
+              'crs':'EPSG:2056',
+              'timestamp':'2011-2019',
+              'description':'median velocity over 2011-2019.'
+             }
+
+da_vx_2056.attrs = attrs_velo 
+da_vx_2056.attrs['long_name'] = 'surface ice velocity (x-component)'
+da_vy_2056.attrs = attrs_velo
+da_vy_2056.attrs['long_name'] = 'surface ice velocity (y-component)'
+da_vx_stdev_2056.attrs = attrs_velo
+da_vx_stdev_2056.attrs['long_name'] = 'surface ice velocity (x-component) standard deviation'
+da_vx_stdev_2056.attrs['description'] = 'standard deviation of ice velocity (2011-2019)'
+da_vy_stdev_2056.attrs = attrs_velo
+da_vy_stdev_2056.attrs['long_name'] = 'surface ice velocity (y-component) standard deviation'
+da_vy_stdev_2056.attrs['description'] = 'standard deviation of ice velocity (2011-2019)'
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=".*angle from rectified to skew grid parameter lost in conversion to CF.*",
+        category=UserWarning,
+        module="pyproj.*",
+    )
+
+    ## save to CLEAN directory
+    fname_vx = 'aletsch_vx_EPSG2056.tif'
+    fname_vy = 'aletsch_vy_EPSG2056.tif'
+    if not os.path.exists(os.path.join(path2data_clean, fname_vx)):
+        da_vx_2056.rio.to_raster(os.path.join(path2data_clean, fname_vx))
+        da_vy_2056.rio.to_raster(os.path.join(path2data_clean, fname_vy))
+    else:
+        print(f"File {fname_vx} already exists in homogenized data directory. Skipping save.")
+        
+    fname_vx_stdev = 'aletsch_vx_stddev_EPSG2056.tif'
+    fname_vy_stdev = 'aletsch_vy_stddev_EPSG2056.tif'
+    if not os.path.exists(os.path.join(path2data_clean, fname_vx_stdev)):
+        da_vx_stdev_2056.rio.to_raster(os.path.join(path2data_clean, fname_vx_stdev))
+        da_vy_stdev_2056.rio.to_raster(os.path.join(path2data_clean, fname_vy_stdev))
 
 
 fig,axs =plt.subplots(2,2, figsize=(12,10))
@@ -275,4 +400,273 @@ da_vy_2056.plot.imshow(ax=axs[1,1], vmin=-1*365.25, vmax=1*365.25, cmap='RdBu_r'
 axs[1,1].set_title('vy 2056 (m/year)'); axs[1,1].set_xlabel('x [m]') # x [m]
 
 
-# %%
+#%% 
+
+''' ##################################
+ASSEMBLE NETCDF
+- DEM
+- thickness
+- vx
+- vy
+- dhdt
+- bedrock
+- outline: as mask
+Fill NaN values with another nodata value 
+--> can be 0 for all variables except DEM and bedrock, so need to make sure these don't have missing values
+##################################
+'''
+gdf_outline1 = gpd.read_file(os.path.join(path2data_clean,'aletsch_outline_20170901.shp'))
+gdf_outline2 = gpd.read_file(os.path.join(path2data_clean,'aletsch_outline_20230823.shp'))
+
+## burn outline into raster mask
+da_dummy = da_dem17.copy(data=np.ones_like(da_dem17.values))
+da_outline_mask1 = (da_dummy*2017).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+da_outline_mask2 = (da_dummy*2023).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+## fill mask NaN with 0
+da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], dim='time'
+                            ).fillna(0) # fill NaN values with 0 (outside outline)
+da_outline_mask = (da_outline_mask.copy()
+                   .max(dim='time') 
+                   .rename('mask')
+                   .assign_attrs({'long_name':'Glacier Outline Mask',
+                                  'units':'year',
+                                  'crs':'EPSG:2056',
+                                  'timestamp':'20170901 and 20230823',
+                                  'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
+                                  'nodata': 0})
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs('EPSG:2056')
+)
+
+
+## set attributes
+
+# DEM and Bedrock: should not have NaN values 
+if da_dem17.isnull().any():
+    raise ValueError("DEM has NaN values, cannot assign nodata value of 0.")
+else: da_dem_10m = (da_dem17.copy()
+                .rename('DEM') 
+                .assign_attrs({'long_name':'Elevation',
+                                'units':'m',
+                                'crs':'EPSG:2056',
+                                'timestamp':'20170901',
+                                'description':'Elevation data.'
+                                })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs('EPSG:2056')
+    )
+
+if da_bedrock17_filled.isnull().any():
+    raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
+else: da_bedrock_10m = (da_bedrock17_filled.copy()
+                    .rename('bedrock')
+                    .assign_attrs({'long_name':'Bedrock Elevation',
+                                   'units':'m',
+                                   'crs':'EPSG:2056',
+                                   'timestamp':'20170901',
+                                   'description':'bedrock calculated from DEM and H. Where H=0, bedrock=DEM.'
+                                   })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs('EPSG:2056')
+    )
+
+## thickness, dhdt, velo: can fill NaN with 0
+da_thickness_10m = (da_H17_matched.fillna(0).copy()
+                    .rename('thickness')
+                    .assign_attrs({'long_name':'Ice Thickness',
+                                   'units':'m',
+                                   'crs':'EPSG:2056',
+                                   'timestamp':'20170901',
+                                   'description':'ice thickness interpolated from GPR. Missing/NaN values were filled with 0.',
+                                   'nodata': 0})
+                # .drop_vars('spatial_ref')
+                .rio.write_crs('EPSG:2056')
+                    )
+da_dhdt_10m = (da_dhdt.fillna(0).copy()
+               .rename('dhdt')
+               .assign_attrs({'long_name':'Surface Elevation Change',
+                              'units':'m/year',
+                              'crs':'EPSG:2056',
+                              'timestamp':'20170901-20230823',
+                              'description':'annual elevation change. Missing/NaN values were filled with 0.',
+                              'nodata': 0})
+                # .drop_vars('spatial_ref')
+                .rio.write_crs('EPSG:2056')
+               )
+
+da_vx_10m = (da_vx_10m.fillna(0).copy()
+             .rename('vx')
+             .assign_attrs({'long_name': 'surface ice velocity (x-component)',
+                            'units':'m/year',
+                            'crs':'EPSG:2056',
+                            'timestamp':'2011-2019',
+                            'description':'median velocity over 2011-2019. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                # .drop_vars('spatial_ref')
+                .rio.write_crs('EPSG:2056')
+)
+
+da_vy_10m = (da_vy_10m.fillna(0).copy()
+             .rename('vy')
+             .assign_attrs({'long_name': 'surface ice velocity (y-component)',
+                            'units':'m/year',
+                            'crs':'EPSG:2056',
+                            'timestamp':'2011-2019',
+                            'description':'median velocity over 2011-2019. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .drop_vars('spatial_ref')
+                .rio.write_crs('EPSG:2056')
+)
+
+
+da_var_list = [ da_bedrock_10m,
+                da_dem_10m, 
+                da_thickness_10m,
+                da_dhdt_10m,
+                da_vx_10m,
+                da_vy_10m,
+                da_outline_mask,
+                ]
+assert all(da.rio.crs == da_dem_10m.rio.crs for da in da_var_list), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dem_10m.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
+assert all(da.shape == da_dem_10m.shape for da in da_var_list), "Not all variables have the same shape"
+
+ds_aletsch_10m = (xr.combine_by_coords(da_var_list, 
+                                       compat='no_conflicts')
+                    .assign_attrs({'title':'homogenized glacier observation data',
+                               'grid_resolution':'10 m',
+                               'description':'see attributes of each variable',
+                               'timestamp':'2017-2023',
+                               'nodata': 0,
+                    })
+                    .rio.set_spatial_dims(x_dim="x", y_dim="y") # Make sure spatial dims are known
+                    # Write CRS and CF grid mapping to the whole dataset
+                    .rio.write_crs("EPSG:2056")
+                    .rio.write_grid_mapping("spatial_ref")
+                    .rio.write_transform()
+)
+
+# Force each real data variable to point to spatial_ref
+for var in ds_aletsch_10m.data_vars:
+    if var != "spatial_ref":
+        ds_aletsch_10m[var].attrs["grid_mapping"] = "spatial_ref"
+
+'''# check values by plotting
+'''
+# for var in ds_aletsch_10m.data_vars:
+#     da_plot = ds_aletsch_10m[var]
+#     # print(da_plot)
+#     fig,ax=plt.subplots(figsize=(6,5))
+    
+#     da_plot.plot.imshow(ax=ax)
+# ds_aletsch_10m
+# Set the no-data value in the encoding dictionary
+
+'''## save to netcdf'''
+
+## encoding settings for compression and data type; same for all variables
+comp = {"zlib": True, 
+        "complevel": 5,  ## level of compression; higher number = more compression but slower read/write
+        "dtype": "float32", ## 7 digits of precision 
+        # "_FillValue": np.float32(-999),
+        }
+encoding = {var: comp for var in ds_aletsch_10m.data_vars if var != "spatial_ref"}  # Exclude spatial_ref from encoding
+encoding["spatial_ref"] = {}  # No compression for spatial_ref
+
+fname_nc = 'aletsch_glacier_observations.nc'
+
+try:
+    print('--> saving homogenized data to netcdf; overwriting if file exists')
+    ds_aletsch_10m.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+    )
+    ds_aletsch_10m.close()
+
+except PermissionError:
+    print('--> CHECK INPUT WINDOW')
+    answ = input(f"PermissionError to write {fname_nc}. Input Y to overwrite")
+    if answ == 'Y' or answ == 'y':
+        print('..removing existing and re-saving file')
+        os.remove(os.path.join(path2data_homog, fname_nc))
+        ds_aletsch_10m.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+        )
+        ds_aletsch_10m.close()
+    else: print('..aborted saving file')
+
+#%% check values by loading saved data & plotting
+
+# for var in ds_aletsch_10m.data_vars:
+#     da_plot = ds_aletsch_10m[var]
+#     # print(da_plot)
+#     fig,ax=plt.subplots(figsize=(6,5))
+    
+#     da_plot.plot.imshow(ax=ax)
+# ds_aletsch_10m
+
+
+# ds_aletsch_loaded = xr.open_dataset(
+#         os.path.join(path2data_homog, fname_nc),
+#         decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
+#     )
+with xr.open_dataset(
+        os.path.join(path2data_homog, fname_nc),
+        decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
+    ) as ds_aletsch_loaded:
+    
+    print('CRS:', ds_aletsch_loaded.rio.crs)
+    print('spatial_ref attrs:', ds_aletsch_loaded["spatial_ref"].attrs)
+    assert ds_aletsch_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
+
+## check values by plotting
+fig,axs=plt.subplots(2,4, figsize=(14,8))
+row,col = 0,0
+for var in ds_aletsch_loaded.data_vars:
+    if var == 'spatial_ref':
+        continue  # Skip plotting the spatial_ref variable
+    da_plot = ds_aletsch_loaded[var]
+    # print(da_plot)
+    # fig,ax=plt.subplots(figsize=(6,5))
+    ax=axs[row,col]
+    da_plot.plot.imshow(ax=ax)
+    ax.set_title(var)
+    col+=1
+    if col >= 4:
+        col = 0
+        row += 1
+[ax.set_aspect('equal') for ax in axs.flatten()];
+[ax.set_axis_off() for ax in axs.flatten()];
+
+
+# ds_aletsch_10m
+# %% Also check all CLEANED files 
+
+files_cleaned = [f for f in os.listdir(path2data_clean) if f.endswith('.tif')]
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message=".*angle from rectified to skew grid parameter lost in conversion to CF.*",
+        category=UserWarning,
+        module="pyproj.*",
+    )
+
+    for filename in files_cleaned:
+        file = os.path.join(path2data_clean, filename)
+        with xr.open_dataarray(file, engine='rasterio') as da:
+            print('------')
+            print(f"File: {filename}")
+            print(f"  CRS: {da.rio.crs}")
+            print(f"  Resolution: {da.rio.resolution()}")
+            display(da.attrs)
+            # print(f"  Shape: {da.shape}")
+            # print(f"  Min/Max: {np.nanmin(da.values)}/{np.nanmax(da.values)}")
+            # print(f"  NaN count: {np.isnan(da.values).sum()}")
+        input('Press Enter to continue to the next file...')
