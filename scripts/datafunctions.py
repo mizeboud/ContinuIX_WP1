@@ -42,7 +42,7 @@ def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m'):
     x_seq = np.arange(x0, x1+grid_res, step=grid_res )
     y_seq = np.arange(y0, y1+grid_res, step=grid_res )
 
-    ## check if y_seq is decreasing (as in EPSG:2056) and reverse if needed
+    ## check if y_seq is decreasing and reverse if needed
     if ds.rio.resolution()[1] < 0: # if y resolution is negative, then y_seq should be decreasing
         y_seq = y_seq[::-1]
 
