@@ -314,7 +314,7 @@ da_outline_mask1 = (da_dummy*2017).rio.clip(gdf_outline1.geometry, gdf_outline1.
 da_outline_mask2 = (da_dummy*2023).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
 ## fill mask NaN with 0
 da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], dim='time'
-                            ).fillna(0) # fill NaN values with 0 (outside outline)
+                            )#.fillna(0) # fill NaN values with 0 (outside outline)
 da_outline_mask = (da_outline_mask.copy()
                    .max(dim='time') 
                    .rename('mask')
@@ -323,7 +323,8 @@ da_outline_mask = (da_outline_mask.copy()
                                   'crs':'EPSG:2056',
                                   'timestamp':'20170901 and 20230823',
                                   'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
-                                  'nodata': 0})
+                                #   'nodata': 0
+                                  })
                     # .drop_vars('spatial_ref')
                     .rio.write_crs('EPSG:2056')
 )
