@@ -4,6 +4,29 @@ import rasterio as rio
 import rioxarray as rioxr
 
 
+def count_nan_values_in_glacier(da, outline_gdf):
+    """
+    Check for NaN values in a DataArray within the glacier outline.
+    
+    Parameters:
+    da (xarray.DataArray): The DataArray to check.
+    outline_gdf (geopandas.GeoDataFrame): The glacier outline.
+    
+    Returns:
+    int: The count of NaN values within the glacier outline.
+    """
+    # Fill NaN with a temporary value
+    da_tmp = da.where(~np.isnan(da), -999)
+    
+    # Clip to glacier outline
+    da_tmp = da_tmp.rio.clip(outline_gdf.geometry)
+    
+    # Count the number of temporary values (-999)
+    count_invalid = da_tmp.where(da_tmp == -999).count(dim=['x', 'y']).item()
+    
+    return count_invalid
+
+
 def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
     ''' Match xarray grid of different spatial resolutions.'''
     

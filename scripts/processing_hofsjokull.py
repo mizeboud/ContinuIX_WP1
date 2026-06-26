@@ -13,7 +13,7 @@ import rioxarray #  activates .rio accessor of xarray
 
 path2data_raw = '../../ContinuIX_WP1_data/Data_Package/01_submitted_data/Hofsjokull/'
 path2data_clean = '../../ContinuIX_WP1_data/Data_Package/02_raw-cleaned_data/Hofsjokull/'
-path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_experiment_package/Hofsjokull/'
+path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_homogenized_data/Hofsjokull/'
 
 import datafunctions as datafuncs
 
@@ -38,8 +38,8 @@ calculate from DEM YYYY and BED (which most represents 2013, but assuming consta
 
 ## Bedrock: as submitted.
 
-## Outlines: not avaialble; take RGIv6 outlines and reproject to 3057.
-## Outlines: toch available; from elevaiton-lidar survey in 2013
+## Outlines: from elevaiton-lidar survey in 2013
+- combine with flow basin infromation from RGIv6
 
 ---
 TO DO: check grid resolutions and homogenize these
@@ -58,12 +58,12 @@ print(gdf_rgiv6.crs)
 ## reproject to iceland reprojection system
 gdf_hofsj = gdf_rgiv6.to_crs(3057)
 
-## save to cleaned dir
-fname = 'hofsjokull_outline_RGIv6.shp'
-if not os.path.exists(os.path.join(path2data_clean, fname)):
-    gdf_hofsj.to_file(os.path.join(path2data_clean, fname))
-else:
-    print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+# ## save to cleaned dir
+# fname = 'hofsjokull_outline_RGIv6.shp'
+# if not os.path.exists(os.path.join(path2data_clean, fname)):
+#     gdf_hofsj.to_file(os.path.join(path2data_clean, fname))
+# else:
+#     print(f"File {fname} already exists in cleaned data directory. Skipping save.")
 
 ## FOR PLOTS in this script
 ## merge all geometries into one (dissolve) to have a single outline for clipping
@@ -86,6 +86,35 @@ coords = np.column_stack([gdf_outline_elev.x, gdf_outline_elev.y])
 poly = Polygon(coords)
 
 gdf_outline_2013 = gpd.GeoDataFrame(geometry=[poly], crs=target_crs)
+gdf_outline_2013["geometry"] = gdf_outline_2013.geometry.make_valid()
+
+### combine RGI6 basins to the 2013 outline 
+
+
+# Clip each flow basin to the ice-cap outline
+icecap_geom = gdf_outline_2013.geometry.item()  
+
+gdf_hofsj_clipped = gdf_hofsj.copy()
+gdf_hofsj_clipped["geometry"] = gdf_hofsj_clipped.geometry.intersection(icecap_geom)
+
+# Remove basins that do not overlap the ice cap
+gdf_hofsj_clipped = gdf_hofsj_clipped[
+    ~gdf_hofsj_clipped.geometry.is_empty
+].copy()
+# fig,ax=plt.subplots(1,1,figsize=(8,8))
+# gdf_outline_2013.plot(ax=ax)
+# gdf_hofsj.boundary.plot(ax=ax, color='red')
+# gdf_hofsj_clipped.boundary.plot(ax=ax, color='black')
+
+## save outline to CLEANED dir
+gdf_basins_2013 = gdf_hofsj_clipped[['RGIId','GLIMSId','CenLon','CenLat','geometry']].copy()
+
+fname = 'hofsjokull_outline_2013.shp'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    gdf_basins_2013.to_file(os.path.join(path2data_clean, fname))
+
+
+
 
 #%%
 ''' ##################################
@@ -119,7 +148,7 @@ da_dhdt_2023 = (da_dem_2023 - da_dem_2020) / (2023-2020)
 # da_dhdt_all = xr.concat([da_dhdt_1320, da_dhdt_1323, da_dhdt_2023], dim='time').assign_coords(time=['2013-2020', '2013-2023', '2020-2023'])
  
 ## dhdt 13-23 should be similar to dhdt1320+dhdt2023: check
-da_dhdt_1323_b = (da_dhdt_1320*7+da_dhdt_2023*3)/10
+# da_dhdt_1323_b = (da_dhdt_1320*7+da_dhdt_2023*3)/10
 
 ## each dhdt period
 # fig,axs=plt.subplots(1,3, figsize=(17,5))
@@ -290,8 +319,6 @@ for year in ['2013', '2020', '2023']:
 
 
 
-
-
 #%%
 ''' ------------------
 ### HOFSJOKUL VELOCITIES  
@@ -446,6 +473,8 @@ else:
 
 
 ## show average fields (no smoothing)
+
+
 # fig,axs=plt.subplots(1,3,figsize=(16,5))
 fig,axs=plt.subplots(1,3,figsize=(16,4))
 da_hofsj_vx_sel.mean(dim='time').plot.imshow(ax=axs[0], vmin=-50, vmax=50, cmap="PiYG")
@@ -553,13 +582,10 @@ ds_DEM_25m_filled = ds_DEM_25m_filled.bfill(dim='time') # backward fill along ti
 ### %% Interpolate to have annual DEMs
 time_interp = np.arange(2013, 2024) # 2013-2023
 ds_DEM_interp = ds_DEM_25m_filled.interp(time=time_interp, method='linear')
-# ds_DEM_25m_ortho = ds_DEM_25m_ortho.interp(time=time_interp, method='linear')
 # ds_DEM_interp.plot.imshow(col='time', col_wrap=4, cmap='terrain', vmin=0, vmax=2000, cbar_kwargs={'fraction':0.02, 'label':'Elevation (m)'})
-
 
 ## Average DEM
 da_DEM_avg_25m0 = ds_DEM_interp.mean(dim='time')
-# da_DEM_avg_25m_ortho = ds_DEM_25m_ortho.mean(dim='time')
 
 ## there's still some very small NaN values in the avg DEM:
 ## - fill these with linear  interpolation
@@ -579,13 +605,20 @@ da_DEM_avg_25m = (da_DEM_avg_25m0
                     )
 ) ## looks like all gaps are filled (apart from out of bounds areas)
 
-fig,axs=plt.subplots(1,2,figsize=(12,5))
-cmap_t = plt.get_cmap('terrain')
-cmap_t.set_bad(color='red') # set color for NaN values
-da_DEM_avg_25m0.plot.imshow(ax=axs[0], cmap=cmap_t, vmin=0, vmax=2000, cbar_kwargs={'fraction':0.02, 'label':'Elevation (m)'})
-axs[0].set_title('Average DEM (2013-2023) 25m')
-da_DEM_avg_25m.plot.imshow(ax=axs[1], cmap=cmap_t, vmin=0, vmax=2000, cbar_kwargs={'fraction':0.02, 'label':'Elevation (m)'})
-axs[1].set_title('Average DEM (2013-2023) 25m (filled gaps)')
+count_invalid = datafuncs.count_nan_values_in_glacier(da_DEM_avg_25m, gdf_outline_2013)
+if count_invalid > 0:
+    print(f"Warning: There are still {count_invalid} NaN values in the averaged DEM after interpolation and filling.")
+
+
+# fig,axs=plt.subplots(1,2,figsize=(12,5))
+# cmap_t = plt.get_cmap('terrain')
+# cmap_t.set_bad(color='red') # set color for NaN values
+# da_DEM_avg_25m0.plot.imshow(ax=axs[0], cmap=cmap_t, vmin=0, vmax=2000, cbar_kwargs={'fraction':0.02, 'label':'Elevation (m)'})
+# axs[0].set_title('Average DEM (2013-2023) 25m')
+# da_DEM_avg_25m.plot.imshow(ax=axs[1], cmap=cmap_t, vmin=0, vmax=2000, cbar_kwargs={'fraction':0.02, 'label':'Elevation (m)'})
+# axs[1].set_title('Average DEM (2013-2023) 25m (filled gaps)')
+
+#%%
 
 #%%
 ''' ## BED and THICKNESS for homogenized
@@ -594,15 +627,9 @@ axs[1].set_title('Average DEM (2013-2023) 25m (filled gaps)')
 ## resample BED from 200 to 25 m
 da_bed_25m = datafuncs.reproject_match_grid(da_dummy_target, da_bed, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
 da_thickness_25m = da_DEM_avg_25m - da_bed_25m
-
 ## remove the extremely small area where thickness is negative 
-# da_thickness_25m = da_thickness_25m.where(da_thickness_25m > 0, np.nan)
-da_thickness_25m = da_thickness_25m.where(da_thickness_25m > 0, 0)
 # ## fill those areas with 0 
-# da_thickness_25m = (da_thickness_25m.interpolate_na( dim="x", method="linear", use_coordinate=False,
-#                         max_gap=20).interpolate_na(dim="y", method="linear", use_coordinate=False, ## do not use coords, as xarray needs Y to be increasing (which its not)
-#                         max_gap=20)
-# ) ## looks like all gaps are filled (apart from out of bounds areas)
+da_thickness_25m = da_thickness_25m.where(da_thickness_25m > 0, 0)
 
 fig,ax=plt.subplots(1,1,figsize=(6,5))
 cmap_t = plt.get_cmap('Blues')
@@ -616,28 +643,73 @@ ax.set_title('Thickness 25m (filled gaps)')
 
 #%%
 ''' ## dhdt homogenized
-- also calculate 'average' dhdt over the period, similar as DEM: interpolate to have annual dhdt, then average over all years
+- also calculate 'average' dhdt over the period, similar as DEM: 
+- use annual-interpolated DEMs to calculate annual dhdt; take average over those 
+
+## I check how well da_dhdt_avg from the annual-DEMs 
+#   compares to the overall dhdt computed directly from 2013 and 2023 DEMs 
+#   and the max difference is 0.0016 so that is acceptably small.
 '''
+ds_dhdt_25m = ds_DEM_interp.diff(dim='time')  # from M to m/yr
+da_dhdt_avg_25m = ds_dhdt_25m.mean(dim='time') # average over all years
+
+# Interpolate small gaps
+max_gap = 5
+da_dhdt_avg_25m = (da_dhdt_avg_25m
+                    .interpolate_na( dim="x", method="linear", use_coordinate=False, max_gap=max_gap )
+                    .interpolate_na( dim="y", method="linear", use_coordinate=False, max_gap=max_gap )
+                    )
+
+count_invalid = count_nan_values_in_glacier(da_dhdt_avg_25m, gdf_outline_2013)
+if count_invalid > 0:
+    print(f"Warning: There are still {count_invalid} NaN values in the da.")
+
+
+#%%
+''' ### Velocity homogenized
+- resample each time slice to 25m
+- interpolate 2018 to get annual values
+- take average
+'''
+# years_sel = [2017, 2019, 2020] ## selected years
+years_interp = [2017, 2018, 2019, 2020] ## add 2018 and interpolate to have annual values for 2017-2020
+da_hofsj_vx_annual = da_hofsj_vx_sel.interp(time=time_interp, method='linear')
+da_hofsj_vy_annual = da_hofsj_vy_sel.interp(time=time_interp, method='linear')
+da_hofsj_vx_25m = datafuncs.reproject_match_grid(da_dummy_target.expand_dims('time'), da_hofsj_vx_annual, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_hofsj_vy_25m = datafuncs.reproject_match_grid(da_dummy_target.expand_dims('time'), da_hofsj_vy_annual, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+## average over years
+da_vx_avg_25m = da_hofsj_vx_25m.mean(dim='time')
+da_vy_avg_25m = da_hofsj_vy_25m.mean(dim='time')
 
 
 #%%
 '''## ELEVATION BINS: discretize DEM into bins of 50m'''
+hmin = da_DEM_avg_25m.min().item()
+hmax = da_DEM_avg_25m.max().item()
+print('hmin, hmax', np.round(hmin,0), np.round(hmax,0))
+## for HOMOGENIZED: do not downsample elev-bin dataArray, but do new binning on donwsampled DEM
+da_elev_bins_25m, elev_bin_edges_25m = datafuncs.dicretize_elevation_bins(da_DEM_avg_25m,
+                                                     hmin=hmin, hmax=hmax,
+                                                     binstep=50)
+
 
 
 #%%
 '''## OUTLINE TO MASK
 for hofsjokull: use thickness = 0 as mask, since no outline was provided'''
-# # burn outline into raster mask
-# gdf_outline1 = outline_2012
-# gdf_outline2 = outline_2020
+# burn outline into raster mask
+da_outline_mask = (da_dummy_target*2013).rio.clip(gdf_outline_2013.geometry, gdf_outline_2013.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
 
-# da_outline_mask1 = (da_dummy_target*2012).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
-# da_outline_mask2 = (da_dummy_target*2020).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
-# ## combine to single dataArray
-# da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], 
-#                             dim='time').max(dim='time') 
-da_thickness_25m = datafuncs.reproject_match_grid(da_dummy_target, da_thickness, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
-da_outline_mask = xr.where(da_thickness_25m > 0, 2020, 0)
+## hofsjokull: also provide flowbasin mask
+da_basin_mask = da_dummy_target.copy(data=np.nan*np.ones_like(da_dummy_target.data)) # initialize with NaN values
+for idx, gdf_basin in gdf_basins_2013.iterrows(): # idx starts at 1
+    gdf_basin = gpd.GeoDataFrame([gdf_basin], crs=gdf_basins_2013.crs) # convert to GeoDataFrame
+    da_mask_i = idx*da_dummy_target.rio.clip(gdf_basin.geometry, gdf_basin.crs, drop=False)
+    # da_mask_i.plot.imshow()
+    da_basin_mask = da_basin_mask.combine_first(da_mask_i) # combine with previous mask
+    ## print basin ID and RGIId
+    print(f'Basin {idx} : {gdf_basin.RGIId.values[0]}')
+
 
 #%%
 ''' ##################################
@@ -645,14 +717,15 @@ RESAMPLING TO TARGET GRID
 ################################## '''
 
 ## initial check that all variables have the same CRS, resolution and shape
-da_var_dict = {'bedrock':da_bedrock_filled.copy(),
+da_var_dict = {'bedrock':da_bed_25m.copy(),
                 'DEM': da_DEM_avg_25m.copy(),
-                'elevation_bins': da_elev_bins_20m.copy(),
-                'thickness':da_h17.copy(),
-                'dhdt': da_dhdt_clean.copy(),
-                'vx': da_vx_clean.copy(),
-                'vy': da_vy_clean.copy(),
-                'mask': da_outline_mask.copy(),
+                'elevation_bins': da_elev_bins_25m.copy(),
+                'thickness':da_thickness_25m.copy(),
+                'dhdt': da_dhdt_avg_25m.copy(),
+                'vx': da_vx_avg_25m.copy(),
+                'vy': da_vy_avg_25m.copy(),
+                'icemask': da_outline_mask.copy(),
+                'basinmask': da_basin_mask.copy()
 }
 ## resample to target grid where necessary
 for varname , var in da_var_dict.items():
@@ -662,8 +735,8 @@ for varname , var in da_var_dict.items():
 
         ## put back in dictionary
         da_var_dict[varname] = var_target_res
-    print(var_target_res.rio.resolution(), var_target_res.shape)
-    if var_target_res.shape != da_dummy_target.shape:
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+    if var.shape != da_dummy_target.shape:
         raise ValueError(f"Shape of {varname} does not match target shape: {var_target_res.shape} vs {da_dummy_target.shape}")
     
 assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_dict.values()), "Not all variables have the same CRS"
@@ -685,51 +758,53 @@ INTERPOLATING GAPS (if relevant)
 Handle NaN values 
 '''
 
-da_outline_mask = (da_var_dict['mask'].copy()
+da_outline_mask = (da_var_dict['icemask'].copy()
                 #    .fillna(0) # fill NaN values with 0 (outside outline)
-                   .rename('mask')
+                   .rename('icemask')
                    .assign_attrs({'long_name':'Glacier Outline Mask',
                                   'units':'year',
                                   'crs':target_crs,
-                                  'timestamp':'',
-                                  'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
-                                  'nodata': 0})
+                                  'timestamp':'2013',
+                                  'description': 'Value is max year of valid glaciated pixel', #; 0 for non-glaciated pixels.',
+                                #   'nodata': 0
+                                  })
+                    .rio.write_crs(target_crs)
+)
+
+da_basin_mask = (da_var_dict['basinmask'].copy()
+                #    .fillna(0) # fill NaN values with 0 (outside outline)
+                   .rename('basinmask')
+                   .assign_attrs({'long_name':'Basin Mask',
+                                  'units':'year',
+                                  'crs':target_crs,
+                                  'timestamp':'2013',
+                                  'description': 'Value indicates basin label that can be linked to a RGI-v6 glacier ID.',
+                                #   'nodata': 0
+                                  })
                     .rio.write_crs(target_crs)
 )
 
 
-# DEM and Bedrock: should not have NaN values 
-# if da_dem_hmg.isnull().any():
-#     # raise ValueError("DEM has NaN values.")
-#     da_dem_hmg = da_dem_hmg.fillna(-999) # fill NaN values with -999 
-# else: 
 da_dem_hmg = (da_var_dict['DEM'].copy()
-                # .fillna(-999)
                 .rename('DEM') 
                 .assign_attrs({'long_name':'Elevation',
                                 'units':'m',
                                 'crs':target_crs,
-                                'timestamp':'avg 2013-2023 ("2018")',
-                                'description':'Elevation data.'
+                                'timestamp':'"2018"',
+                                'description':'Average elevation data from DEMs in 2013, 2020 and 2023 (orthometric height).'
                                 })
-                    # .drop_vars('spatial_ref')
                     .rio.write_crs(target_crs)
     )
 
-# if da_bedrock_hmg.isnull().any():
-#     # raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
-#     # da_bedrock_hmg = da_bedrock_hmg.fillna(-999) # fill NaN values with 0
-# else: 
 da_bedrock_hmg = (da_var_dict['bedrock'].copy()
                     # .fillna(-999) # fill NaN values with -999
                     .rename('bedrock')
                     .assign_attrs({'long_name':'Bedrock Elevation',
                                    'units':'m',
                                    'crs':target_crs,
-                                   'timestamp':'2017',
-                                   'description':'bedrock calculated from DEM and H. Where H=0, bedrock=DEM.'
+                                   'timestamp':'2013',
+                                   'description':'bedrock elevation. Echosounding performed in 1983 but bias-corrected to an additional 2013 survey.'
                                    })
-                    # .drop_vars('spatial_ref')
                     .rio.write_crs(target_crs)
     )
 
@@ -742,8 +817,8 @@ da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
                     .assign_attrs({'long_name':'Elevation Bins',
                                   'units':'m',
                                   'crs':target_crs,
-                                  'timestamp':'2017',
-                                  'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin.'
+                                  'timestamp':'"2018"',
+                                  'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin. Determined from average DEM over 2013-2023.'
                                   })
                     .rio.write_crs(target_crs)
 )
@@ -755,8 +830,8 @@ da_thickness_hmg = (da_var_dict['thickness'].copy()
                     .assign_attrs({'long_name':'Ice Thickness',
                                    'units':'m',
                                    'crs':target_crs,
-                                   'timestamp':'20170215',
-                                   'description':'ice thickness interpolated from GPR. Missing/NaN values were filled with 0.',
+                                   'timestamp':'"2018"',
+                                   'description':'Ice thickness calculated from DEM-bedrock, using average DEM of 2013-2023. Missing/NaN values were filled with 0.',
                                    'nodata': 0})
                 .rio.write_crs(target_crs)
                     )
@@ -766,8 +841,8 @@ da_dhdt_hmg = (da_var_dict['dhdt'].copy()
                .assign_attrs({'long_name':'Surface Elevation Change',
                               'units':'m/year',
                               'crs':target_crs,
-                              'timestamp':'2012-2021',
-                              'description':'Annual elevation change. Missing/NaN values were filled with 0.',
+                              'timestamp':'"2013-2023"',
+                              'description':'Average annual elevation change, obtained from DEMs in 2013, 2020 and 2023. Missing/NaN values were filled with 0.',
                               'nodata': 0})
                 .rio.write_crs(target_crs)
                )
@@ -778,8 +853,8 @@ da_vx_hmg = (da_var_dict['vx'].copy()
              .assign_attrs({'long_name': 'surface ice velocity (x-component)',
                             'units':'m/year',
                             'crs':target_crs,
-                            'timestamp':'2012-2021',
-                            'description':'Velocity for the period 2012-2021. Missing/NaN values were filled with 0.',
+                            'timestamp':'2017-2020',
+                            'description':'Average velocity for the period 2017-2020, calculated from observations in 2017, 2019, 2020. Missing/NaN values were filled with 0.',
                             'nodata': 0
                             })
                 .rio.write_crs(target_crs)
@@ -791,8 +866,8 @@ da_vy_hmg = (da_var_dict['vy'].copy()
              .assign_attrs({'long_name': 'surface ice velocity (y-component)',
                             'units':'m/year',
                             'crs':target_crs,
-                            'timestamp':'2012-2021',
-                            'description':'Velocity for 2012-2021. Missing/NaN values were filled with 0.',
+                            'timestamp':'2017-2020',
+                            'description':'Average velocity for the period 2017-2020, calculated from observations in 2017, 2019, 2020. Missing/NaN values were filled with 0.',
                             'nodata': 0
                             })
                 .rio.write_crs(target_crs)
@@ -810,6 +885,7 @@ da_var_list = [ da_bedrock_hmg,
                 da_vx_hmg,
                 da_vy_hmg,
                 da_outline_mask,
+                da_basin_mask
                 ]
 assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
 assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
@@ -865,7 +941,7 @@ comp = {"zlib": True,
 encoding = {var: comp for var in ds_glacier_hmg.data_vars if var != "spatial_ref"}  # Exclude spatial_ref from encoding
 encoding["spatial_ref"] = {}  # No compression for spatial_ref
 
-fname_nc = 'argentiere_glacier_observations.nc'
+fname_nc = 'hofsjokull_glacier_observations.nc'
 
 try:
     print('--> saving homogenized data to netcdf; overwriting if file exists')
@@ -902,12 +978,15 @@ with xr.open_dataset(
     print('spatial_ref attrs:', ds_glacier_loaded["spatial_ref"].attrs)
     assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
 
+#%%
 ## check values by plotting
 fig,axs=plt.subplots(2,4, figsize=(20,8))
 row,col = 0,0
 for var in ds_glacier_loaded.data_vars:
     if var == 'spatial_ref':
         continue  # Skip plotting the spatial_ref variable
+    if var == 'basinmask':
+        break  # Stop after plotting the last variable
     da_plot = ds_glacier_loaded[var]
     # print(da_plot)
     # fig,ax=plt.subplots(figsize=(6,5))
@@ -920,8 +999,8 @@ for var in ds_glacier_loaded.data_vars:
         row += 1
 [ax.set_aspect('equal') for ax in axs.flatten()];
 [ax.set_axis_off() for ax in axs.flatten()];
-
-fig.savefig(os.path.join(path2data_homog, 'argentiere_netcdf_vars.png'), dpi=300)
+fig.tight_layout()
+fig.savefig(os.path.join(path2data_homog, 'hofsjokull_netcdf_vars.png'), dpi=300)
 # %%
 
 
