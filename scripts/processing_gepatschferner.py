@@ -10,71 +10,14 @@ import os
 import matplotlib.pyplot as plt
 import rasterio as rio
 import rioxarray #  activates .rio accessor of xarray
+import glob
 
 path2data_raw = '../../ContinuIX_WP1_data/Data_Package/01_submitted_data/Gepatschferner/'
 path2data_clean = '../../ContinuIX_WP1_data/Data_Package/02_raw-cleaned_data/Gepatschferner/'
 path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_homogenized_data/Gepatschferner/'
 
-#%% Functions
+import datafunctions as datafuncs
 
-def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
-    ''' Match xarray grid of different spatial resolutions.'''
-    
-    # Expected order: ('time', 'y', 'x')
-    dims = img_da.dims
-    if 'time' in dims:
-        ref_img_da = ref_img_da.transpose('time','y','x') # CRS is alreadyy written .rio.write_crs(3031, inplace=True)
-        img_da = img_da.transpose('time','y','x')
-    
-    # -- reproject (even though same crs) and match grid (extent, resolution and projection)
-    img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
-
-    # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
-    img_repr_match = img_repr_match.assign_coords({
-        "y": ref_img_da.y,
-        "x": ref_img_da.x,
-    })
-    
-    return img_repr_match.transpose(*dims) # transpose dimension order back to original
-
-
-def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m'):
-    ''' Create a regular dummy grid with specified resolution and CRS, based on the extent of the input dataset/dataArray. 
-    This can be used as a reference grid for reprojecting/matching other datasets. 
-    Parameters:
-    - ds: xarray Dataset or DataArray to define the extent of the grid
-    - grid_res: desired grid resolution (in the same units as the CRS, e.g., meters)
-    - crs: desired coordinate reference system (default: same as input dataset)
-    - unit: unit of the grid resolution (default: 'm' for meters)
-    '''
-    if not crs:
-        crs = ds.rio.crs
-    x0 = ds.x.min().item() ; x1 = ds.x.max().item() ; y0 = ds.y.min().item() ; y1 = ds.y.max().item()
-    # x0 = np.floor(x0/grid_res)*grid_res; x1 = np.floor(x1/grid_res)*grid_res; 
-    # y0 = np.floor(y0/grid_res)*grid_res; y1 = np.floor(y1/grid_res)*grid_res
-    x_seq = np.arange(x0, x1+grid_res, step=grid_res )
-    y_seq = np.arange(y0, y1+grid_res, step=grid_res )
-
-    ## get floating point presicion of grid_res, and apply that to x0 (e.g. if x0 is at 0.0730001 and grid_res is 0.08, then start xgrid at 287.00 instead of 287.0000000001)
-    decimal_places = int(-np.floor(np.log10(grid_res)))
-    ## round the sequences to avoid floating point precision issues (e.g. if x_seq is [287.00, 287.08, 287.16, ...] but due to floating point precision it is actually [287.0000000001, 287.0800000001, 287.1600000001, ...], then round to 2 decimal places to get rid of the tiny differences)
-    x_seq = np.round(x_seq, decimal_places)
-    y_seq = np.round(y_seq, decimal_places)
-
-    grid_dummy = xr.DataArray(
-        data=np.ones( (len(y_seq), len(x_seq)) ),
-        dims=["y", "x"],
-        coords=dict(
-            y=y_seq,
-            x=x_seq,
-        ),
-        attrs=dict(
-            description=f"regular grid at {grid_res} {unit} resolution",
-            unit=unit,
-        ),
-    ).rio.write_crs(crs)
-    
-    return grid_dummy
 
 #%% Step 0: Check submitted (raw) data
 ''' ##################################
@@ -129,8 +72,8 @@ dh_2 = xr.open_dataarray(os.path.join(path2data_raw, 'gepatsch_dh_2006-2018.tif'
 dh_1.rio.resolution() ## 1 m
 
 ## reproject to bedrock grid resolution (10 m)
-da_dh_1 = reproject_match_grid(da_bedrock, dh_1, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
-da_dh_2 = reproject_match_grid(da_bedrock, dh_2, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_dh_1 = datafuncs.reproject_match_grid(da_bedrock, dh_1, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_dh_2 = datafuncs.reproject_match_grid(da_bedrock, dh_2, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
 da_dh = da_dh_1.combine_first(da_dh_2)
 
 dt = 2017-2006
@@ -153,7 +96,7 @@ else:
 ### DEMs: from data.tirol.gv.at; is in 50cm resolution
 1. combine DEMs at lower resolution (2m), in EPSG25832, save in 'submitted' folder
 2. no further cleaning needed
-3. reproject to 10m resolution and save in 'homogenized' folder
+3. reproject to 10m resolution for 'homogenized'
 ############################ '''
 import glob 
 
@@ -162,12 +105,12 @@ filelist_dem17 = glob.glob(os.path.join(file_to_dem, '*.tif'))
 # ds_DEM_2017 = xr.mf
 
 ## create dummy grid
-da_dummy_2m = create_regular_dummy_grid(da_dhdt, grid_res=2, crs=25832, unit='m')
+da_dummy_2m = datafuncs.create_regular_dummy_grid(da_dhdt, grid_res=2, crs=25832, unit='m')
 da_dem_list = []
 for file in filelist_dem17:
     da_tile = xr.open_mfdataset(file).isel(band=0).drop_vars('band')['band_data']
 
-    da_tile_2m = reproject_match_grid(da_dummy_2m, da_tile, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+    da_tile_2m = datafuncs.reproject_match_grid(da_dummy_2m, da_tile, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
     da_dem_list.append(da_tile_2m)
 
 ## combine DEMs at 2m resolution
@@ -180,41 +123,66 @@ fname = 'gepatsch_DEM_2017.tif'
 if not os.path.exists(os.path.join(path2data_raw, fname)):
     print(f'Saving {fname} to submitted data directory...')
     da_dem_2017_2m.rio.to_raster(os.path.join(path2data_raw, fname))
-else:
-    print(f"File {fname} already exists in submitted data directory. Skipping save.")
+else: print(f"File {fname} already exists in submitted data directory. Skipping save.")
 
-## do the same for tirol.gov BED (DTM)
+'''## --- do the same for tirol.gov BED (DTM)
+--> no not needed, DTM and DEM are pracically the same '''
+
 file_to_dtm = '../../ContinuIX_WP1_data/11_Gepatschferner/tirol-gov_DEM-DTM/DGM_DTM/'
 filelist_dtm17 = glob.glob(os.path.join(file_to_dtm, '*.tif'))
 da_dtm_list = []
 for file in filelist_dtm17:
     da_tile = xr.open_mfdataset(file).isel(band=0).drop_vars('band')['band_data']
 
-    da_tile_2m = reproject_match_grid(da_dummy_2m, da_tile, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+    da_tile_2m = datafuncs.reproject_match_grid(da_dummy_2m, da_tile, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
     da_dtm_list.append(da_tile_2m)
 
 da_dtm_2017_2m = xr.combine_nested(da_dtm_list, concat_dim='band').max(dim='band') ## patches all tiles and taking max means taking the single non-nan value.
 da_dtm_2017_2m.plot.imshow()
 
-fname = 'gepatsch_DTM_2017.tif'
-if not os.path.exists(os.path.join(path2data_raw, fname)):
-    print(f'Saving {fname} to submitted data directory...')
-    da_dtm_2017_2m.rio.to_raster(os.path.join(path2data_raw, fname),driver='COG')
-else:
-    print(f"File {fname} already exists in submitted data directory. Skipping save.")
+# fname = 'gepatsch_DTM_2017.tif'
+# if not os.path.exists(os.path.join(path2data_raw, fname)):
+#     print(f'Saving {fname} to submitted data directory...')
+#     da_dtm_2017_2m.rio.to_raster(os.path.join(path2data_raw, fname),driver='COG')
+# else: print(f"File {fname} already exists in submitted data directory. Skipping save.")
 
-#%%
-''' # 3. to homogenized: 10 m '''
-da_dummy_10m = create_regular_dummy_grid(da_dhdt, grid_res=10, crs=25832, unit='m')
-da_dem_2017_10m = reproject_match_grid(da_dummy_10m, da_dem_2017_2m, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
-
-## save to submitted data folder
+''' ## -----
+Also save both to CLEANED dir. Rename 'DTM to 'bedrock'
+----- '''
 fname = 'gepatsch_DEM_2017.tif'
-if not os.path.exists(os.path.join(path2data_homog, fname)):
-    print(f'Saving {fname} to submitted data directory...')
-    da_dem_2017_10m.rio.to_raster(os.path.join(path2data_homog, fname))
-else:
-    print(f"File {fname} already exists in submitted data directory. Skipping save.")
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    print(f'Saving {fname} to cleaned data directory...')
+    da_dem_2017_2m.rio.to_raster(os.path.join(path2data_clean, fname))
+else: print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+
+# fname = 'gepatsch_bedrock_2017.tif'
+# if not os.path.exists(os.path.join(path2data_clean, fname)):
+#     print(f'Saving {fname} to cleaned data directory...')
+#     da_dtm_2017_2m.rio.to_raster(os.path.join(path2data_clean, fname),driver='COG')
+# else: print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+
+
+# #%%
+# ''' ### check bedrock of DTM to the provided bedrock_2006
+# - ok so what I thought that DTM=bedrock is not true --> rely on bedrock_2006 which is what they actually submitted.
+# - apparently DTM == DEM  practically.. 
+#     '''
+# fig,axs=plt.subplots(1,3, figsize=(12,6))
+# ax=axs[0]
+# da_dem_2017_2m.plot.imshow(ax=ax, cmap='terrain', vmin=2000, vmax=4000)
+# ax=axs[1]
+# da_dtm_2017_2m.plot.imshow(ax=ax, cmap='terrain', vmin=2000, vmax=4000)
+# da_dtm_10m = datafuncs.reproject_match_grid(da_bedrock, da_dtm_2017_2m, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+# bedrock_diff = da_dtm_10m - (da_bedrock + datafuncs.reproject_match_grid(da_bedrock, da_thickness, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan) )
+bedrock_diff = (da_dtm_2017_2m - da_dem_2017_2m).rio.clip(gdf_2006.geometry)
+median_diff = bedrock_diff.median().item()
+stddev_diff = bedrock_diff.std().item()
+
+# ax=axs[2]
+# bedrock_diff.plot.imshow(ax=ax, cmap='RdBu', vmin=-5, vmax=5)
+
+
+
 
 # %% Looking at stake veloicity
 ''' ########################
@@ -224,7 +192,8 @@ else:
 - each row represents coordinates between consequetive readings (date0 to date1; or date0 to datemid to date1).
 - In rows where coordinates were filled only for date0 and date1, the distance between those coordinates can be used to derive an annual velocity. 
 - If coordinates for "datemid" were filled, the annual velocity should be computed by combining the first period with the second 
-    (for example, distance moved in X direction: (X0-X0_m)+(X1_m-X1)).
+    (for example, distance moved in X direction: (X0-X0_m)+(X1_m-X1)). 
+    NB UPDATE: this was not specified correctly in the readme. Should be (X0_m-X0)+(X1-X1_m) to get the correct direction of movement. Same for Y direction.
 
 
 --> so e.g. stake P60:
@@ -513,6 +482,728 @@ ax.set_ylabel('Y / Northing (m)')
 ax.grid(linestyle='--', alpha=0.3)
 ax.set_title(f'Stake velocities')
 
+#%%
+''' ########################
+### VELOCITY FIELD
+
+# Use Rabatel-2023 velocity; both Rabatel and Millan velocity have OK agreement with stake velocity, but Rabatel offers better uncertainty assessment in accumulation area
+- Rabatel flag 'bad' velocity values. In the accumulation area of Gepatsch there's a blob(s) with unrealisticly high velocities 
+--> provide velo field and flags for CLEAN data
+--> remove and re-interpolate bad values for homogenized data
+
+## SUBMITTED:
+- load all rabatell velocity maps of ALPS --> clip to glacier
+- include stdev and flags
+- in native CRS, 32632 (50 m res)
+- annual velocity between 2016-2021
+
+## RAW/CLEAN:
+- decompose VELO and DIR to VX and VY (DIR = Flow direction represented as the angle between the flow vector and x-axis. (0°: North))
+- reprojected velocity (and flags, stdev, etc.) to 25832
+- keep flag / high velo blobs
+- keep annual velocity files (if they look good): SELECT only velocities 2015-16 and 2016-17 as they are in dhdt range
+
+## HOMOGENIZED:
+- remove flagged high velo blobs, re-interpolate and fill gaps
+- merge annual to single velocity field
+
+############################ '''
+# target_crs = 'EPSG:25832'
+## rabatel velocity is in EPSG:32632
+
+## Gepatsch extent
+gepatsch_bounds = da_dhdt.rio.bounds()
+## add a buffer of 1 km
+gepatsch_bounds = (gepatsch_bounds[0]-1000, gepatsch_bounds[1]-1000, gepatsch_bounds[2]+1000, gepatsch_bounds[3]+1000)
+gepatsch_bounds_32632 = rio.warp.transform_bounds(da_dhdt.rio.crs, 'EPSG:32632', *gepatsch_bounds)
+
+'''## Load velocity files, clip to Gepatsch'''
+velolist_rabatel = glob.glob('../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/v*_ALPES_ALL_ANNUALv*.tiff')
+# da_v_rabatel = xr.open_mfdataset('../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/v2015_2016_ALPES_ALL_ANNUALv2016-2021.tiff').isel(band=0)['band_data'].drop_vars('band') ## rabatel velocity is in EPSG:32632
+
+## rabatell velocity is in EPSG:32632
+for years_velo in ['2015_2016', '2016_2017', '2017_2018', '2018_2019', '2019_2020', '2020_2021']:
+     ## save to RAW folder
+    fname = f'gepatsch_v_{years_velo}_rabatel_EPSG32632.tif'
+    if not os.path.exists(os.path.join(path2data_raw, fname)):
+        with xr.open_mfdataset(f'../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/v{years_velo}_ALPES_ALL_ANNUALv2016-2021.tiff'
+                            ) as da_v_rabatel_year:
+            print(f'.. years_velo: {years_velo}')
+            
+            da_v_rabatel_year = da_v_rabatel_year.isel(band=0)['band_data'].drop_vars('band') ## rabatel velocity is in EPSG:32632
+            assert da_v_rabatel_year.rio.crs == 'EPSG:32632', "Rabatel velocity is not in EPSG:32632"
+
+            ## clip to gepatsch bounds
+            da_v_rabatel_clip = da_v_rabatel_year.rio.clip_box(*gepatsch_bounds_32632, crs='EPSG:32632')
+
+        
+            print(f'Saving {fname} to raw data directory...')
+            da_v_rabatel_clip.rio.to_raster(os.path.join(path2data_raw, fname))
+    else: print(f"File {fname} already exists in raw data directory. Skipping save.")
+
+'''## same for velocity direction, velocity stdev , flgas'''
+da_dir_rabatel = xr.open_mfdataset('../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/dir_ALPES_ALL_ANNUALv2016-2021.tiff').isel(band=0)['band_data'].drop_vars('band')
+da_stdev_rabatel = xr.open_mfdataset('../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/stdev_ALPES_ALL_ANNUALv2016-2021.tiff').isel(band=0)['band_data'].drop_vars('band')
+da_flags_rabatel = xr.open_mfdataset('../../ContinuIX_WP1_data/other_data/rabatel_etal_2023_alps_velocity/flag_ALPES_ALL_ANNUALv2016-2021.tiff').isel(band=0)['band_data'].drop_vars('band')
+## assert CRS
+assert da_dir_rabatel.rio.crs == da_stdev_rabatel.rio.crs == da_flags_rabatel.rio.crs == 'EPSG:32632', "Rabatel velocity direction is not in EPSG:32632"
+## clip bounds
+da_dir_rabatel = da_dir_rabatel.rio.clip_box(*gepatsch_bounds_32632, crs='EPSG:32632')
+da_stdev_rabatel = da_stdev_rabatel.rio.clip_box(*gepatsch_bounds_32632, crs='EPSG:32632')
+da_flags_rabatel = da_flags_rabatel.rio.clip_box(*gepatsch_bounds_32632, crs='EPSG:32632')
+
+## save to SUBMITTED folder
+fname = f'gepatsch_velo-dir_rabatel_EPSG32632.tif'
+if not os.path.exists(os.path.join(path2data_raw, fname)):
+    print(f'Saving {fname} to raw data directory...')
+    da_dir_rabatel.rio.to_raster(os.path.join(path2data_raw, fname))
+else: print(f"File {fname} already exists in raw data directory. Skipping save.")
+
+fname = f'gepatsch_velo-stdev_rabatel_EPSG32632.tif'
+if not os.path.exists(os.path.join(path2data_raw, fname)):
+    print(f'Saving {fname} to raw data directory...')
+    da_stdev_rabatel.rio.to_raster(os.path.join(path2data_raw, fname))
+else: print(f"File {fname} already exists in raw data directory. Skipping save.")
+
+fname = f'gepatsch_velo-flags_rabatel_EPSG32632.tif'
+if not os.path.exists(os.path.join(path2data_raw, fname)):
+    print(f'Saving {fname} to raw data directory...')
+    da_flags_rabatel.rio.to_raster(os.path.join(path2data_raw, fname))
+else: print(f"File {fname} already exists in raw data directory. Skipping save.")
+
+
+#%% CLEANING: 
+
+'''## RAW/CLEAN:
+- decompose VELO and DIR to VX and VY
+- reprojected velocity (and flags, stdev, etc.) to 25832
+- keep flag / high velo blobs
+- keep annual velocity files (if they look good)'''
+
+velolist_rabatel = sorted(glob.glob(os.path.join(path2data_raw, 'gepatsch_v_*_rabatel_EPSG32632.tif')))
+ds_v_rabatel = xr.open_mfdataset(velolist_rabatel,
+                                 combine='nested',
+                                 concat_dim='band',
+                                 ) ## rabatel velocity is in EPSG:32632
+## rename 'band' coord to 'time' and assign time coordinate as the first year of the velocity period
+da_v_rabatel = ds_v_rabatel.rename({'band':'time'}).assign_coords(time=[2015, 2016, 2017, 2018, 2019, 2020])['band_data']
+
+'''## decompose VX and VY using the direction
+NB: DIR = Flow direction represented as the angle between the flow vector and x-axis. (0°: North))
+--> means assuming 
+0°   = north
+90°  = east
+180° = south
+270° = west
+and 
+vx = speed * np.sin(theta)  # eastward / x component
+vy = speed * np.cos(theta)  # northward / y component
+
+(rather than default where east=0, and vx = np.cos(theta), vy = np.sin(theta))
+'''
+
+vx_rabatel = da_v_rabatel * np.sin(np.deg2rad(da_dir_rabatel))  # eastward / x component
+vy_rabatel = da_v_rabatel * np.cos(np.deg2rad(da_dir_rabatel))  # northward / y component
+
+
+'''## CHECK velocity arrows with dir plot velocity direction as arrows
+'''
+fig,axs=plt.subplots(1,2, figsize=(16,8))
+gdf_2017.boundary.plot(ax=axs[0], edgecolor='steelblue', linewidth=1.5, alpha=0.5, label='Glacier outline 2017')
+gdf_2017.boundary.plot(ax=axs[1], edgecolor='steelblue', linewidth=1.5, alpha=0.5, label='Glacier outline 2017')
+
+ax=axs[0]
+## make quiver plot of velocity direction
+ax.quiver(da_dir_rabatel.x, da_dir_rabatel.y,
+          np.cos(np.deg2rad(da_dir_rabatel.values)), ## normal: vx = speed * np.cos(angle)
+          np.sin(np.deg2rad(da_dir_rabatel.values)), ## normal: vy = speed * np.sin(angle)
+        color='k', scale=50, width=0.002, alpha=0.5)
+ax.set_title('default math angles: 0°=east, 90°=north, 180°=west, 270°=south')
+ax=axs[1]
+## make quiver plot of velocity direction
+ax.quiver(da_dir_rabatel.x, da_dir_rabatel.y,
+        #   np.cos(np.deg2rad(da_dir_rabatel.values)), ## normal: vx = speed * np.cos(angle)
+        #   np.sin(np.deg2rad(da_dir_rabatel.values)), ## normal: vy = speed * np.sin(angle)
+          np.sin(np.deg2rad(da_dir_rabatel.values)), ## with NORTH=0: vx = speed * np.sin(angle)
+          np.cos(np.deg2rad(da_dir_rabatel.values)), ## with NORTH=0: vy = speed * np.cos(theta)  # northward / y component
+            color='k', scale=50, width=0.002, alpha=0.5)
+ax.set_title('with NORTH=0: 0°=north, 90°=east, 180°=south, 270°=west')
+## zoom box 
+padding = 500
+for ax in axs:
+    ax.set_xlim(df_coords['X0'].min() - padding,
+                df_coords['X0'].max() + padding)
+    ax.set_ylim(df_coords['Y0'].min() - padding,
+                df_coords['Y0'].max() + padding)
+
+## CHECK velocity arrows with dir plot velocity direction as arrows
+fig,axs=plt.subplots(1,2, figsize=(10,4))
+vx_rabatel.isel(time=-1).plot.imshow(ax=axs[0], cmap='PiYG', vmin=-50, vmax=50)
+vy_rabatel.isel(time=-1).plot.imshow(ax=axs[1], cmap='PiYG', vmin=-50, vmax=50)
+
+#%% REPROJECT VELOs
+''' ##### REPROJECT VELOCITIES 
+NB: Rabatel velocity is in EPSG:32632, and target_crs is EPSG:25832 
+    Both are versions of UTM Zone 32N, but with different datums (WGS84 vs ETRS89).
+    Therefore, we reporoject velocities, although the difference is likely very small.
+##########'''
+
+vx_list = []
+vy_list = []
+for y in vx_rabatel.time.values: ## only 2015-16 and 2016-17 are in dhdt range, so only keep those for CLEAN data
+    # -----------------------------
+    # Rotate velocity components to new CRS
+    # -----------------------------
+    vx_rabatel_rot, vy_rabatel_rot = datafuncs.rotate_velocity_components_reprojection(vx_rabatel.sel(time=y), vy_rabatel.sel(time=y), 
+                                                                                       src_epsg="32632", dst_epsg="25832")
+    
+    # -----------------------------
+    # Reproject rasters to EPSG:25832
+    # -----------------------------
+    da_vx_reproj = vx_rabatel_rot.rio.reproject("EPSG:25832")
+    da_vy_reproj = vy_rabatel_rot.rio.reproject("EPSG:25832")
+
+    ## regularize grid back to 50 m resolution
+    da_dummy_50m_dst = datafuncs.create_regular_dummy_grid(da_vx_reproj, grid_res=50, crs="EPSG:25832", unit='m')
+
+    da_vx_rerpoj = datafuncs.reproject_match_grid(da_dummy_50m_dst, da_vx_reproj, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
+    da_vy_rerpoj = datafuncs.reproject_match_grid(da_dummy_50m_dst, da_vy_reproj, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
+
+    ## save to CLEAN directory
+    year_str = f'{y}-{y+1}'
+    if y <= 2016:
+        fname = f'gepatsch_vx_{year_str}.tif'
+        if not os.path.exists(os.path.join(path2data_clean, fname)):
+            print(f'Saving {fname} to clean data directory...')
+            da_vx_rerpoj.rio.to_raster(os.path.join(path2data_clean, fname))
+        else: print(f"File {fname} already exists in clean data directory. Skipping save.")
+
+        fname = f'gepatsch_vy_{year_str}.tif'
+        if not os.path.exists(os.path.join(path2data_clean, fname)):
+            print(f'Saving {fname} to clean data directory...')
+            da_vy_rerpoj.rio.to_raster(os.path.join(path2data_clean, fname))
+        else: print(f"File {fname} already exists in clean data directory. Skipping save.")
+
+    vx_list.append(da_vx_rerpoj)
+    vy_list.append(da_vy_rerpoj)
+
+## TMP: check differecne with 'direct' reprojections 
+# da_vx_TMP = datafuncs.reproject_match_grid(da_dummy_50m_dst.expand_dims('time'), vx_rabatel)
+# da_vy_TMP = datafuncs.reproject_match_grid(da_dummy_50m_dst.expand_dims('time'), vy_rabatel)
+# diff_TMP = da_vx_TMP.isel(time=0) - da_vx_rerpoj
+# ## difference min-max is -0.000684, 0.000428 : so, pretty small.
+
+## stdev raster need to be reprojected but not rotated since its scalar fields
+da_v_stdev_50m = datafuncs.reproject_match_grid(da_dummy_50m_dst, da_stdev_rabatel, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
+# da_v_flag_reproj = da_flags_rabatel.rio.reproject("EPSG:25832")
+da_v_flag_50m = datafuncs.reproject_match_grid(da_dummy_50m_dst, da_flags_rabatel, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
+## for flag: fill nan values with 1 (0 = flagged data, 1 = good data)
+da_v_flag_50m = da_v_flag_50m.fillna(1)
+assert da_v_stdev_50m.rio.crs == da_v_flag_50m.rio.crs == 'EPSG:25832', "Reprojected stdev and flag rasters are not in EPSG:25832"
+
+## save to CLEAN directory
+
+fname = f'gepatsch_v-stdev_2016-2021.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    print(f'Saving {fname} to clean data directory...')
+    da_v_stdev_50m.rio.to_raster(os.path.join(path2data_clean, fname))
+else: print(f"File {fname} already exists in clean data directory. Skipping save.")
+
+
+fname = f'gepatsch_v-flag_2016-2021.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    print(f'Saving {fname} to clean data directory...')
+    da_v_flag_50m.rio.to_raster(os.path.join(path2data_clean, fname))
+else: print(f"File {fname} already exists in clean data directory. Skipping save.")
+
+#%% 
+''' ## velocity towards homogenized field
+- calculate mean velo of all years (2015-2020): used to fill gaps (presumably more 'robust' than only using two years)
+    - smooth all-year-mean velocity to remove outliers and noise
+- calculate MEAN velo of relevant years (2015-16 and 2016-17)
+    - mask FLAGGED areas 
+    - fill flagged gaps with all-year-mean 
+ '''
+
+da_dummy_10m = datafuncs.create_regular_dummy_grid(da_v_flag_50m, grid_res=10, crs=25832, unit='m')
+
+ds_vx = xr.concat(vx_list, dim='time').assign_coords(time=[2015, 2016, 2017, 2018, 2019, 2020]).rename('vx')
+ds_vy = xr.concat(vy_list, dim='time').assign_coords(time=[2015, 2016, 2017, 2018, 2019, 2020]).rename('vy')
+
+## plot vx input
+# ds_vx.plot.imshow(col='time', col_wrap=3, cmap='PiYG', vmin=-50, vmax=50)
+
+''' ## original mean field, all years: take mean and smooth'''
+da_vx_mean = ds_vx.mean(dim='time', skipna=True)
+da_vy_mean = ds_vy.mean(dim='time', skipna=True)
+## fil small NaN gaps on-glacier
+max_gap = 5
+da_vx_mean = (da_vx_mean.interpolate_na( dim="x", method="linear", use_coordinate=False, max_gap=max_gap ).interpolate_na( dim="y", method="linear", use_coordinate=False, max_gap=max_gap ))
+da_vy_mean = (da_vy_mean.interpolate_na( dim="x", method="linear", use_coordinate=False, max_gap=max_gap ).interpolate_na( dim="y", method="linear", use_coordinate=False, max_gap=max_gap ))
+## fill area outside of glacier with 0  (so that when smoothing we don't get nan-values creeping into the glacier area at the boudns)
+da_vx_mean = da_vx_mean.fillna(0)
+da_vy_mean = da_vy_mean.fillna(0)
+
+## smooth the mean velocity field to remove outliers and noise
+da_vx_smooth = da_vx_mean.rolling(x=3, y=3, center=True).mean() # simple rolling mean with window size 3x3
+da_vy_smooth = da_vy_mean.rolling(x=3, y=3, center=True).mean()  # simple rolling mean with window size 3x3
+
+
+''' ## velocity to use: flag areas and fill gaps '''
+## FLAGS: set 1 value to nan
+da_flag_valid = da_v_flag_50m.where(da_v_flag_50m==1, np.nan).rename('flag')
+
+## make flagged area a bit more generous: reproject to 10 m with bilinear interpolation, then reproject back to 50 m. 
+# This will create flagged area edges with values between 0 and 1, which we can use to define a more generous flagged area.
+da_flag_valid_10m = datafuncs.reproject_match_grid(da_dummy_10m.expand_dims('time'), da_v_flag_50m, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_flag_valid_50m = datafuncs.reproject_match_grid(da_v_flag_50m, da_flag_valid_10m, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_flag_valid_50m = np.round(da_flag_valid_50m, decimals=1).rename('flag_valid') ## round flag values to 0.1 decimals
+
+## mask all flagged velocity
+# da_vx_masked = ds_vx.where(da_flag_valid==1, np.nan)
+da_vx_masked = ds_vx.where(da_flag_valid_50m>0.8, np.nan) ## using the more generous flagged area. flag=1 is a very big area, flag=0.5 yields (almost) same original area. 
+da_vy_masked = ds_vy.where(da_flag_valid_50m>0.8, np.nan)
+used_mask = da_flag_valid_50m>0.8 ## binary mask
+
+## set-up desired field: mean value of desired time slices 
+da_vx_maskedmean = da_vx_masked.sel(time=[2015,2016]).mean(dim='time', skipna=True)
+da_vy_maskedmean = da_vy_masked.sel(time=[2015,2016]).mean(dim='time', skipna=True)
+## remove isolated pixels (single pixel with valid value surrounded by NaN) in the masked velocity field
+da_vx_maskedmean = da_vx_maskedmean.where(da_vx_maskedmean.notnull().rolling(x=3, y=3, center=True).sum() > 2, np.nan)  # keep only pixels that have at least two valid neighbor in a 3x3 window
+da_vy_maskedmean = da_vy_maskedmean.where(da_vy_maskedmean.notnull().rolling(x=3, y=3, center=True).sum() > 2, np.nan)  # keep only pixels that have at least two valid neighbor in a 3x3 window
+
+## fill masked areas with smoothed mean velocity field
+da_vx_filled = da_vx_maskedmean.combine_first(da_vx_smooth)
+da_vy_filled = da_vy_maskedmean.combine_first(da_vy_smooth)
+
+
+## calculate velocity magnitude of filled field, and compare difference of original velocity magnitude
+da_v_original = np.sqrt(ds_vx.sel(time=[2015,2016]).mean(dim='time', skipna=True)**2 + ds_vy.sel(time=[2015,2016]).mean(dim='time', skipna=True)**2).fillna(0)
+da_v_filled = np.sqrt(da_vx_filled**2 + da_vy_filled**2)
+da_v_diff = da_v_original - da_v_filled
+
+# ## apply a very simple & small smoothing to the filled velocity field to remove any jumpt at the edges of the gap
+# ## --> not needed. the DX of vx does not look like it has extreme jumps
+# da_vx_filled_smooth = da_vx_filled.rolling(x=2, y=2, center=True).median()
+
+# ## check difference between filled and original field
+# da_vx_diff = da_vx_mean - da_vx_filled
+# da_vy_diff = da_vy_mean - da_vy_filled
+
+fig,axs=plt.subplots(2,2, figsize=(12,10))
+vmin=-100; vmax=100
+ax=axs[0,0]
+da_vx_mean.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+ax.set_title('(1) original mean vx')
+ax=axs[0,1]
+da_vx_smooth.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+ax.set_title('(2) Smoothed mean vx')
+# ax=axs[0,2]
+# da_vx_maskedmean.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+# ax.set_title('masked mean vx')
+ax=axs[1,0]
+da_vx_filled.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+ax.set_title('(4) Filled vx')
+ax=axs[1,1]
+da_vx_maskedmean.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+ax.set_title('(3) masked mean vx')
+# da_vx_filled_smooth.plot.imshow(ax=ax, cmap='PiYG', vmin=vmin, vmax=vmax)
+# ax.set_title('Filled vx with smoothing')
+# ax=axs[1,2]
+# da_vx_diff.plot.imshow(ax=ax, cmap='RdBu', vmin=-5, vmax=5)
+# ax.set_title('Difference between original and filled vx')
+
+# fig.savefig('/Users/mizeboud/Documents/Documents_mizeboud/Projects/ContinuIX/WP1_data/figures/gepatsch_velocity/' + \
+#                 f'gepatsch_rabatel-velocity_homogenization_steps.jpg', dpi=300, bbox_inches='tight')
+
+fig,axs=plt.subplots(1,3, figsize=(15,5))
+vmin=0; vmax=120
+ax=axs[0]
+da_v_original.plot.imshow(ax=ax, cmap='viridis', vmin=vmin, vmax=vmax)
+ax.set_title('Original velocity magnitude \n (mean 2015-16 & 2016-17)')
+ax=axs[1]
+da_v_filled.plot.imshow(ax=ax, cmap='viridis', vmin=vmin, vmax=vmax)
+ax.set_title('masked+filled velocity magnitude')  
+ax=axs[2]
+da_v_diff.plot.imshow(ax=ax, cmap='RdBu', vmin=-15, vmax=15)
+ax.set_title('Difference between original and \n masked+filled velocity magnitude')
+# ax=axs[3]
+# used_mask.plot.imshow(ax=ax, cmap='gray', vmin=0, vmax=1)
+# ax.set_title('Used mask (1=original, 0=filled)')
+
+# fig.savefig('/Users/mizeboud/Documents/Documents_mizeboud/Projects/ContinuIX/WP1_data/figures/gepatsch_velocity/' + \
+#                 f'gepatsch_rabatel-velocity_homogenization_diff.jpg', dpi=300, bbox_inches='tight')
+
+
+# %%
+''' #################
+ THICKNESS: 5m resolution 
+ ###############'''
+da_thickness = xr.open_dataset(os.path.join(path2data_raw, 'gepatsch_h_2006.tif')).isel(band=0)['band_data'].drop_vars('band')
+assert da_thickness.rio.crs == 'EPSG:25832', "Thickness raster is not in EPSG:25832"
+print(da_thickness.rio.resolution())
+da_thickness.plot.imshow()
+
+#%%
+''' ##################################
+Make Elevation bins
+--> 50 m binstep
+--> based on earliest DEM if multiple available (assuming glacier is retreating, so earliest DEM has highest elevations)
+--> do for both CLEAN and HOMOGNEIZED data; so possibly also resampling to different resolution
+##################################
+'''
+
+target_res = 10 # meter
+target_crs = 'EPSG:25832'
+da_dummy_target = datafuncs.create_regular_dummy_grid(da_dhdt, grid_res=10, crs=25832, unit='m')
+
+
+hmin = da_dem_2017_2m.min().item()
+hmax = da_dem_2017_2m.max().item()
+
+## for HOMOGENIZED: do not downsample elev-bin dataArray, but do new binning on donwsampled DEM
+da_dem_targetres = datafuncs.reproject_match_grid(da_dummy_target, da_dem_2017_2m, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+da_elev_bins_10m, elev_bin_edges_10m = datafuncs.dicretize_elevation_bins(da_dem_targetres,
+                                                     hmin=hmin, hmax=hmax,
+                                                     binstep=50)
+
+print('--- elev bins ---')
+print(f'.. min max DEM: {np.round(hmin,0):.0f} to {np.round(hmax,0):.0f}')
+print('.. bin edges: ', elev_bin_edges_10m)
+
+## save to CLEAN directory
+fname = 'gepatsch_elev-bins.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    da_elev_bins_10m.rename('elevation_bins').rio.to_raster(os.path.join(path2data_clean, fname))
+
+#%% 
+
+
+
+#%%
+''' ##################################
+HOMOGENIZED DATA
+- fill all NaN values with 0
+- do something else for DEM?
+################################## '''
+
+target_res = 10 # meter
+target_crs = 'EPSG:25832'
+da_dummy_target = datafuncs.create_regular_dummy_grid(da_dhdt, grid_res=10, crs=25832, unit='m')
+
+
+'''## OUTLINE TO MASK'''
+# burn outline into raster mask
+gdf_outline1 = gdf_2006; year1 = 2006
+gdf_outline2 = gdf_2017; year2 = 2017
+
+da_outline_mask1 = (da_dummy_target*year1).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+da_outline_mask2 = (da_dummy_target*year2).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+## combine to single dataArray
+da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], 
+                            dim='time').max(dim='time') 
+
+''' ##################################
+ASSEMBLE NETCDF
+- DEM
+- thickness
+- vx
+- vy
+- dhdt
+- bedrock
+- outline: as mask
+Fill NaN values with another nodata value 
+--> can be 0 for all variables except DEM and bedrock, so need to make sure these don't have missing values
+##################################
+'''
+
+
+## initial check that all variables have the same CRS, resolution and shape
+## TO UPDATE 
+da_var_dict = {'bedrock':da_bedrock.copy(),
+                'DEM': da_dem_2017_2m.copy(),
+                'elevation_bins': da_elev_bins_10m.copy(),
+                'thickness':da_thickness.copy(),
+                'dhdt': da_dhdt.copy(),
+                'vx': da_vx_filled.copy(),
+                'vy': da_vy_filled.copy(),
+                'icemask': da_outline_mask.copy(),
+}
+## resample to target grid where necessary
+for varname , var in da_var_dict.items():
+    print(varname)
+    if var.rio.resolution()[0] != target_res:
+        print(f'.. resampling {varname} from {var.rio.resolution()[0]} m to {target_res} m')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+        ## put back in dictionary
+        da_var_dict[varname] = var_target_res
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+    else: ## still resample, so I get no accidental geotransform issues from floating point precisin thingies
+        print('.. updating coords')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+        da_var_dict[varname] = var_target_res
+    
+    if var_target_res.shape != da_dummy_target.shape:
+        raise ValueError(f"Shape of {varname} does not match target shape: {var_target_res.shape} vs {da_dummy_target.shape}")
+    
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_dict.values()), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_dict.values()), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_dict.values()), "Not all variables have the same shape"
+
+
+'''
+# SET ATTRIBUTES OF VARIABLES
+Handle NaN values 
+'''
+
+da_outline_mask = (da_var_dict['icemask'].copy()
+                #    .fillna(0) # fill NaN values with 0 (outside outline)
+                   .rename('icemask')
+                   .assign_attrs({'long_name':'Glacier Outline Mask',
+                                  'units':'year',
+                                  'crs':target_crs,
+                                  'timestamp':'2006 and 2017',
+                                  'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
+                                  'nodata': 0})
+                    .rio.write_crs(target_crs)
+)
+
+
+# DEM and Bedrock: should not have NaN values 
+# if da_dem_hmg.isnull().any():
+#     # raise ValueError("DEM has NaN values.")
+#     da_dem_hmg = da_dem_hmg.fillna(-999) # fill NaN values with -999 
+# else: 
+da_dem_hmg = (da_var_dict['DEM'].copy()
+                # .fillna(-999)
+                .rename('DEM') 
+                .assign_attrs({'long_name':'Elevation',
+                                'units':'m',
+                                'crs':target_crs,
+                                'timestamp':'2017',
+                                'description':'Elevation data.'
+                                })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs(target_crs)
+    )
+
+# if da_bedrock_hmg.isnull().any():
+#     # raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
+#     # da_bedrock_hmg = da_bedrock_hmg.fillna(-999) # fill NaN values with 0
+# else: 
+da_bedrock_hmg = (da_var_dict['bedrock'].copy()
+                    # .fillna(-999) # fill NaN values with -999
+                    .rename('bedrock')
+                    .assign_attrs({'long_name':'Bedrock Elevation',
+                                   'units':'m',
+                                   'crs':target_crs,
+                                   'timestamp':'2006',
+                                   'description':'bedrock elevation, as provided.'
+                                   })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs(target_crs)
+    )
+
+# if da_elev_bins_hmg.isnull().any():
+#     raise ValueError("Elevation bins has NaN values (since DEM has them), cannot assign nodata value of 0.")
+# else: 
+da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
+                    # .fillna(-999) # fill NaN values with -999
+                    .rename('elevation_bins')
+                    .assign_attrs({'long_name':'Elevation Bins',
+                                  'units':'m',
+                                  'crs':target_crs,
+                                  'timestamp':'2017',
+                                  'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin.'
+                                  })
+                    .rio.write_crs(target_crs)
+)
+
+## thickness, dhdt, velo: can fill NaN with 0
+da_thickness_hmg = (da_var_dict['thickness'].copy()
+                    .fillna(0)
+                    .rename('thickness')
+                    .assign_attrs({'long_name':'Ice Thickness',
+                                   'units':'m',
+                                   'crs':target_crs,
+                                   'timestamp':'2006',
+                                   'description':'ice thickness interpolated from GPR. Missing/NaN values were filled with 0.',
+                                   'nodata': 0})
+                .rio.write_crs(target_crs)
+                    )
+da_dhdt_hmg = (da_var_dict['dhdt'].copy()
+               .fillna(0)
+               .rename('dhdt')
+               .assign_attrs({'long_name':'Surface Elevation Change',
+                              'units':'m/year',
+                              'crs':target_crs,
+                              'timestamp':'2006-2017',
+                              'description':'Annual elevation change. Missing/NaN values were filled with 0.',
+                              'nodata': 0})
+                .rio.write_crs(target_crs)
+               )
+
+da_vx_hmg = (da_var_dict['vx'].copy()
+             .fillna(0)
+             .rename('vx')
+             .assign_attrs({'long_name': 'Surface ice velocity (x-component)',
+                            'units':'m/year',
+                            'crs':target_crs,
+                            'timestamp':'2015-2017',
+                            'description':'Average velocity for the period 2015-2017. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
+
+da_vy_hmg = (da_var_dict['vy'].copy()
+             .fillna(0)
+             .rename('vy')
+             .assign_attrs({'long_name': 'Surface ice velocity (y-component)',
+                            'units':'m/year',
+                            'crs':target_crs,
+                            'timestamp':'2015-2017',
+                            'description':'Average velocity for the period 2015-2017. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
+
+#%%
+
+## final check that everything is still homogenized 
+
+da_var_list = [ da_bedrock_hmg,
+                da_dem_hmg, 
+                da_elev_bins_hmg,
+                da_thickness_hmg,
+                da_dhdt_hmg,
+                da_vx_hmg,
+                da_vy_hmg,
+                da_outline_mask,
+                ]
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_list), "Not all variables have the same shape"
+
+### final NaN check: no NaN values for within-glacier bounds allowed
+for da in da_var_list:
+    count_invalid = datafuncs.count_nan_values_in_glacier(da, gdf_outline1)
+    if count_invalid > 0:
+        print(f"Warning: There are still {count_invalid} NaN values in {da.name} after interpolation and filling.")
+
+
+
+ds_glacier_hmg = (xr.combine_by_coords(da_var_list, 
+                                       compat='no_conflicts')
+                    .assign_attrs({'title':'homogenized glacier observation data',
+                               'grid_resolution':str(da_dummy_target.rio.resolution()),
+                               'description':'see attributes of each variable',
+                               'timestamp':'',
+                            #    'nodata': 0,
+                    })
+                    .rio.set_spatial_dims(x_dim="x", y_dim="y") # Make sure spatial dims are known
+                    # Write CRS and CF grid mapping to the whole dataset
+                    .rio.write_crs(target_crs)
+                    .rio.write_grid_mapping("spatial_ref")
+                    .rio.write_transform()
+)
+
+
+# Force each real data variable to point to spatial_ref
+for var in ds_glacier_hmg.data_vars:
+    if var != "spatial_ref":
+        ds_glacier_hmg[var].attrs["grid_mapping"] = "spatial_ref"
+
+#%%
+'''# check values by plotting
+'''
+# for var in ds_glacier_hmg.data_vars:
+#     da_plot = ds_glacier_hmg[var]
+#     # print(da_plot)
+#     fig,ax=plt.subplots(figsize=(6,5))
+    
+#     da_plot.plot.imshow(ax=ax)
+# ds_glacier_hmg
+# Set the no-data value in the encoding dictionary
+
+#%%
+'''## save to netcdf'''
+
+# ## clean fill/missing values before encoding --> no just keep original NaN coding.
+# for var in ds_glacier_hmg.data_vars:
+#     ds_glacier_hmg[var].attrs.pop("_FillValue", None)
+#     ds_glacier_hmg[var].attrs.pop("missing_value", None)
+#     ds_glacier_hmg[var].encoding.pop("_FillValue", None)
+#     ds_glacier_hmg[var].encoding.pop("missing_value", None)
+
+## encoding settings for compression and data type; same for all variables
+comp = {"zlib": True, 
+        "complevel": 5,  ## level of compression; higher number = more compression but slower read/write
+        "dtype": "float32", ## 7 digits of precision 
+        # "_FillValue": np.float32(-999), ## for remaining NaN values
+        }
+encoding = {var: comp for var in ds_glacier_hmg.data_vars if var != "spatial_ref"}  # Exclude spatial_ref from encoding
+encoding["spatial_ref"] = {}  # No compression for spatial_ref
+
+fname_nc = 'gepatschferner_glacier_observations.nc'
+
+try:
+    print('--> saving homogenized data to netcdf; overwriting if file exists')
+    ds_glacier_hmg.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+    )
+    ds_glacier_hmg.close()
+
+except PermissionError:
+    print('--> CHECK INPUT WINDOW')
+    answ = input(f"PermissionError to write {fname_nc}. Input Y to overwrite")
+    if answ == 'Y' or answ == 'y':
+        print('..removing existing and re-saving file')
+        os.remove(os.path.join(path2data_homog, fname_nc))
+        ds_glacier_hmg.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+        )
+        ds_glacier_hmg.close()
+    else: print('..aborted saving file')
+
+
+#%% check values by loading saved data & plotting
+
+with xr.open_dataset(
+        os.path.join(path2data_homog, fname_nc),
+        decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
+    ) as ds_glacier_loaded:
+    
+    print('CRS:', ds_glacier_loaded.rio.crs)
+    print('spatial_ref attrs:', ds_glacier_loaded["spatial_ref"].attrs)
+    assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
+
+## check values by plotting
+fig,axs=plt.subplots(2,4, figsize=(20,8))
+row,col = 0,0
+for var in ds_glacier_loaded.data_vars:
+    if var == 'spatial_ref':
+        continue  # Skip plotting the spatial_ref variable
+    da_plot = ds_glacier_loaded[var]
+    # print(da_plot)
+    # fig,ax=plt.subplots(figsize=(6,5))
+    ax=axs[row,col]
+    da_plot.plot.imshow(ax=ax, cbar_kwargs={'shrink': 0.7})
+    ax.set_title(var)
+    col+=1
+    if col >= 4:
+        col = 0
+        row += 1
+[ax.set_aspect('equal') for ax in axs.flatten()];
+[ax.set_axis_off() for ax in axs.flatten()];
+
+fig.savefig(os.path.join(path2data_homog, 'gepatsch_netcdf_vars.png'), dpi=300)
 # %%
 
 # %%
