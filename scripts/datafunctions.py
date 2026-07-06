@@ -152,12 +152,88 @@ def transform_velocity_components_epsg4326_to_epsg2056(da_vx, da_vy,
     vx_2056[mask] = np.nan
     vy_2056[mask] = np.nan
 
-    da_vx_rot = da_vx.copy(data=vx_2056).rename("vx_2056")
-    da_vy_rot = da_vy.copy(data=vy_2056).rename("vy_2056")
+    da_vx_rot = da_vx.copy(data=vx_2056).rename("vx_reproj")
+    da_vy_rot = da_vy.copy(data=vy_2056).rename("vy_reproj")
 
-    da_vx_rot = da_vx_rot.rio.write_crs("EPSG:4326")
-    da_vy_rot = da_vy_rot.rio.write_crs("EPSG:4326")
+    da_vx_rot = da_vx_rot.rio.write_crs(src_crs)
+    da_vy_rot = da_vy_rot.rio.write_crs(src_crs)
 
+    return da_vx_rot, da_vy_rot
+
+
+def rotate_velocity_components_reprojection(da_vx, da_vy, 
+                                            src_epsg="4326", dst_epsg="2056"):
+    from pyproj import CRS, Transformer, Geod
+
+    src_crs = CRS.from_epsg(src_epsg)
+    dst_crs = CRS.from_epsg(dst_epsg)
+
+    # Velocity magnitude and azimuth in original coordinates
+    vx = da_vx.values
+    vy = da_vy.values
+    speed = np.sqrt(vx**2 + vy**2)
+
+    ## set up transformer for reprojection
+    transformer = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
+
+    if dst_crs.is_geographic:
+        raise ValueError(f"Destination CRS {dst_crs} is geographic (lat/lon). Should adapt code to handle this.")
+
+    if src_crs.is_geographic: ## lat lon coords
+        # print(f"Source CRS {src_crs} is geographic (lat/lon).")
+
+        
+        geod = Geod(ellps="WGS84")
+
+        # Get lon/lat coordinate grids
+        lon = da_vx["x"].values
+        lat = da_vx["y"].values
+        lon2d, lat2d = np.meshgrid(lon, lat)
+        
+        # pyproj.Geod uses azimuth clockwise from north:
+        # eastward vx, northward vy -> azimuth = atan2(east, north)
+        azimuth = np.degrees(np.arctan2(vx, vy))
+
+        # Create a second point after moving by the velocity distance. 
+        # Speed: spatial unit should be in meters (doesnt matter if its m/day or m/year)
+        lon_end, lat_end, _ = geod.fwd(lon2d, lat2d, azimuth, speed)
+
+        # Project start and end points to EPSG:2056
+        x0_dst, y0_dst = transformer.transform(lon2d, lat2d)
+        x1_dst, y1_dst = transformer.transform(lon_end, lat_end)
+
+    elif src_crs.is_projected: ## projected coords
+        # print(f"Source CRS {src_crs} is projected. (meters)")
+
+        # Coordinate grids in source CRS, already metres
+        xcoord = da_vx["x"].values
+        ycoord = da_vx["y"].values
+        x2d, y2d = np.meshgrid(xcoord, ycoord)
+
+        # Starting points transformed to destination CRS
+        x0_dst, y0_dst = transformer.transform(x2d, y2d)
+        # Ending points in source CRS after one velocity time-unit
+        x_end_src = x2d + vx
+        y_end_src = y2d + vy
+        # Ending points transformed to destination CRS
+        x1_dst, y1_dst = transformer.transform(x_end_src, y_end_src)
+    
+
+    # Difference gives velocity components in EPSG:2056
+    vx_2056 = x1_dst - x0_dst
+    vy_2056 = y1_dst - y0_dst
+
+    # Preserve NaNs
+    mask = np.isnan(vx) | np.isnan(vy)
+    vx_2056[mask] = np.nan
+    vy_2056[mask] = np.nan
+
+    da_vx_rot = da_vx.copy(data=vx_2056).rename("vx_rot")
+    da_vy_rot = da_vy.copy(data=vy_2056).rename("vy_rot")
+
+    da_vx_rot = da_vx_rot.rio.write_crs(src_crs)
+    da_vy_rot = da_vy_rot.rio.write_crs(src_crs)
+    
     return da_vx_rot, da_vy_rot
 
 
