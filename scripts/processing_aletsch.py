@@ -202,7 +202,7 @@ da_vx_rot, da_vy_rot = datafuncs.transform_velocity_components_epsg4326_to_epsg2
 )
 
 # -----------------------------
-# Reproject rasters to EPSG:2056
+# Reproject underlying rasters to EPSG:2056
 # -----------------------------
 da_vx_2056 = da_vx_rot.rio.reproject("EPSG:2056")
 da_vy_2056 = da_vy_rot.rio.reproject("EPSG:2056")
@@ -317,7 +317,7 @@ da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], dim='time'
                             )#.fillna(0) # fill NaN values with 0 (outside outline)
 da_outline_mask = (da_outline_mask.copy()
                    .max(dim='time') 
-                   .rename('mask')
+                   .rename('icemask')
                    .assign_attrs({'long_name':'Glacier Outline Mask',
                                   'units':'year',
                                   'crs':'EPSG:2056',
@@ -572,4 +572,23 @@ with warnings.catch_warnings():
             # print(f"  Shape: {da.shape}")
             # print(f"  Min/Max: {np.nanmin(da.values)}/{np.nanmax(da.values)}")
             # print(f"  NaN count: {np.isnan(da.values).sum()}")
-        input('Press Enter to continue to the next file...')
+        # input('Press Enter to continue to the next file...')
+
+# #%% Load synthetic Aletsch case
+
+# path2synth = '../../ContinuIX_WP1_data/Data_Package/01_submitted_data/Synthetic2/'
+
+# ds_synth_aletsch = xr.open_dataset(
+#     os.path.join(path2synth, 'aletsch_ss_100year.nc'), 
+#     decode_coords="all",
+#     # engine='rasterio'
+#     )
+# print(f"  CRS: {ds_synth_aletsch.rio.crs}")
+# print(f"  Resolution: {ds_synth_aletsch.rio.resolution()}")
+
+# # print(f"  Shape: {da.shape}")
+# # print(f"  Min/Max: {np.nanmin(da.values)}/{np.nanmax(da.values)}")
+# # print(f"  NaN count: {np.isnan(da.values).sum()}")
+
+
+# %%

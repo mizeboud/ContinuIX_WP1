@@ -660,7 +660,7 @@ da_dhdt_avg_25m = (da_dhdt_avg_25m
                     .interpolate_na( dim="y", method="linear", use_coordinate=False, max_gap=max_gap )
                     )
 
-count_invalid = count_nan_values_in_glacier(da_dhdt_avg_25m, gdf_outline_2013)
+count_invalid = datafuncs.count_nan_values_in_glacier(da_dhdt_avg_25m, gdf_outline_2013)
 if count_invalid > 0:
     print(f"Warning: There are still {count_invalid} NaN values in the da.")
 
@@ -1001,6 +1001,8 @@ for var in ds_glacier_loaded.data_vars:
 [ax.set_axis_off() for ax in axs.flatten()];
 fig.tight_layout()
 fig.savefig(os.path.join(path2data_homog, 'hofsjokull_netcdf_vars.png'), dpi=300)
+
+
 # %%
 
 
