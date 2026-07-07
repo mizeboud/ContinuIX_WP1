@@ -710,7 +710,7 @@ if not os.path.exists(os.path.join(path2data_clean, fname)):
 else: print(f"File {fname} already exists in clean data directory. Skipping save.")
 
 
-fname = f'gepatsch_v-flag_2016-2021.tif'
+fname = f'gepatsch_v-flagged_2016-2021.tif'
 if not os.path.exists(os.path.join(path2data_clean, fname)):
     print(f'Saving {fname} to clean data directory...')
     da_v_flag_50m.rio.to_raster(os.path.join(path2data_clean, fname))

@@ -505,39 +505,33 @@ except PermissionError:
 
 #%% check values by loading saved data & plotting
 
-# for var in ds_aletsch_10m.data_vars:
-#     da_plot = ds_aletsch_10m[var]
-#     # print(da_plot)
-#     fig,ax=plt.subplots(figsize=(6,5))
-    
-#     da_plot.plot.imshow(ax=ax)
-# ds_aletsch_10m
-
-
-# ds_aletsch_loaded = xr.open_dataset(
-#         os.path.join(path2data_homog, fname_nc),
-#         decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
-#     )
 with xr.open_dataset(
         os.path.join(path2data_homog, fname_nc),
         decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
-    ) as ds_aletsch_loaded:
+    ) as ds_glacier_loaded:
     
-    print('CRS:', ds_aletsch_loaded.rio.crs)
-    print('spatial_ref attrs:', ds_aletsch_loaded["spatial_ref"].attrs)
-    assert ds_aletsch_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
+    print('CRS:', ds_glacier_loaded.rio.crs)
+    print('spatial_ref attrs:', ds_glacier_loaded["spatial_ref"].attrs)
+    assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
 
 ## check values by plotting
-fig,axs=plt.subplots(2,4, figsize=(14,8))
+fig,axs=plt.subplots(2,4, figsize=(16,8))
 row,col = 0,0
-for var in ds_aletsch_loaded.data_vars:
+for var, cmap in zip(ds_glacier_loaded.data_vars, ['cividis','cividis','cividis','Blues',
+                                                   'RdBu','PiYG','PiYG','viridis']):
     if var == 'spatial_ref':
         continue  # Skip plotting the spatial_ref variable
-    da_plot = ds_aletsch_loaded[var]
+    if var == 'dhdt':
+        vmin,vmax = -5,5;
+    elif var == 'vx' or var == 'vy':
+        vmin,vmax = -100,100;
+    else:
+        vmin,vmax=None,None
+    da_plot = ds_glacier_loaded[var]
     # print(da_plot)
     # fig,ax=plt.subplots(figsize=(6,5))
     ax=axs[row,col]
-    da_plot.plot.imshow(ax=ax)
+    da_plot.plot.imshow(ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, cbar_kwargs={'shrink': 0.7})
     ax.set_title(var)
     col+=1
     if col >= 4:
@@ -545,6 +539,8 @@ for var in ds_aletsch_loaded.data_vars:
         row += 1
 [ax.set_aspect('equal') for ax in axs.flatten()];
 [ax.set_axis_off() for ax in axs.flatten()];
+
+fig.savefig(os.path.join(path2data_homog, 'aletsch_netcdf_vars.png'), dpi=300)
 
 
 # ds_aletsch_10m

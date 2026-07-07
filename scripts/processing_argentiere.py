@@ -347,7 +347,7 @@ Handle NaN values
 
 da_outline_mask = (da_var_dict['mask'].copy()
                 #    .fillna(0) # fill NaN values with 0 (outside outline)
-                   .rename('mask')
+                   .rename('icemask')
                    .assign_attrs({'long_name':'Glacier Outline Mask',
                                   'units':'year',
                                   'crs':target_crs,
