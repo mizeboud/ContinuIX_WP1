@@ -15,28 +15,29 @@ path2data_raw = '../../ContinuIX_WP1_data/Data_Package/01_submitted_data/Zongo/'
 path2data_clean = '../../ContinuIX_WP1_data/Data_Package/02_raw-cleaned_data/Zongo/'
 path2data_homog = '../../ContinuIX_WP1_data/Data_Package/03_homogenized_data/Zongo/'
 
+import datafunctions as datafuncs
 
-#%% FUnctions
+# #%% FUnctions
 
-def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
-    ''' Match xarray grid of different spatial resolutions.'''
+# def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan):
+#     ''' Match xarray grid of different spatial resolutions.'''
     
-    # Expected order: ('time', 'y', 'x')
-    dims = img_da.dims
-    if 'time' in dims:
-        ref_img_da = ref_img_da.transpose('time','y','x') # CRS is alreadyy written .rio.write_crs(3031, inplace=True)
-        img_da = img_da.transpose('time','y','x')
+#     # Expected order: ('time', 'y', 'x')
+#     dims = img_da.dims
+#     if 'time' in dims:
+#         ref_img_da = ref_img_da.transpose('time','y','x') # CRS is alreadyy written .rio.write_crs(3031, inplace=True)
+#         img_da = img_da.transpose('time','y','x')
     
-    # -- reproject (even though same crs) and match grid (extent, resolution and projection)
-    img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
+#     # -- reproject (even though same crs) and match grid (extent, resolution and projection)
+#     img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
 
-    # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
-    img_repr_match = img_repr_match.assign_coords({
-        "y": ref_img_da.y,
-        "x": ref_img_da.x,
-    })
+#     # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
+#     img_repr_match = img_repr_match.assign_coords({
+#         "y": ref_img_da.y,
+#         "x": ref_img_da.x,
+#     })
     
-    return img_repr_match.transpose(*dims) # transpose dimension order back to original
+#     return img_repr_match.transpose(*dims) # transpose dimension order back to original
 
 
 #%% Step 0: Check submitted (raw) data
@@ -69,6 +70,7 @@ TO DO: check grid resolutions and homogenize these
 ##################################
 '''
 zongo_outline = gpd.read_file(os.path.join(path2data_raw, 'zongo_outline-2006.shp'))
+
 
 ''' ##################################
 Thickness profiles
@@ -117,9 +119,13 @@ else:
 Bedrock
 ################################## '''
 
+da_dem_2006 = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_DEM_2006.tif')
+                    ).isel(band=0).drop_vars('band')
+## dem2006 has 0 values instead of nan
+da_dem_2006 = da_dem_2006.where(da_dem_2006 > 0, np.nan)
 da_dem_2013 = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_DEM_2013.tif')
                     ).isel(band=0).drop_vars('band')
-da_h_2012 = xr.open_dataarray(os.path.join(path2data_clean, 'Zongo_h_20120809.tif')
+da_h_2012 = xr.open_dataarray(os.path.join(path2data_clean, 'zongo_h_20120809.tif')
                     ).isel(band=0).drop_vars('band')
 print(da_dem_2013.rio.crs)
 assert da_dem_2013.rio.crs == da_h_2012.rio.crs, "CRS of DEM and thickness grid do not match"
@@ -153,11 +159,11 @@ else:
 dhdt
 ################################## '''
 
-da_dhdt = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_dhdt_2006-2013.tif')
+da_dh = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_dh_2006-2013.tif')
                              ).isel(band=0).drop_vars('band')
 ## has bad NaN values .. mask lim values 
-da_dhdt = da_dhdt.where(np.abs(da_dhdt) < 1000) ## set values with abs > 1000 to nan
-da_dhdt = da_dhdt / (2013-2006) ## in m/yr
+da_dh = da_dh.where(np.abs(da_dh) < 1000) ## set values with abs > 1000 to nan
+da_dhdt = da_dh / (2013-2006) ## in m/yr
 
 zongo_outline = gpd.read_file(os.path.join(path2data_raw, 'zongo_outline-2006.shp'))
 
@@ -170,4 +176,416 @@ if not os.path.exists(os.path.join(path2data_clean, fname)):
     da_dhdt.rio.to_raster(os.path.join(path2data_clean, fname))
 else:
     print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+
+# %%
+''' ##################################
+velocity fields:
+take from Millan, 50m resolution.
+- has been checked with stake measurements, seems to be OK; also checked Ducasse velocity. But since the Data Providers submitted the Millan velocity themselves, we favor this.
+################################## '''
+
+vx_millan = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_vx_2017-2018.tif')
+                             ).isel(band=0).drop_vars('band')
+vy_millan = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_vy_2017-2018.tif')
+                             ).isel(band=0).drop_vars('band')
+
+vx_std = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_vx-std_2017-2018.tif')
+                             ).isel(band=0).drop_vars('band')
+vy_std = xr.open_dataarray(os.path.join(path2data_raw, 'zongo_vy-std_2017-2018.tif')
+                             ).isel(band=0).drop_vars('band')
+
+assert vx_millan.rio.crs == vy_millan.rio.crs == 'EPSG:32719'
+print(vx_millan.rio.resolution())
+
+## no further cleaning needed, save to CLEAN
+fname = 'zongo_vx_2017-2018.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    vx_millan.rio.to_raster(os.path.join(path2data_clean, fname))
+    vx_std.rio.to_raster(os.path.join(path2data_clean, 'zongo_vx-std_2017-2018.tif'))
+else: print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+fname = 'zongo_vy_2017-2018.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    vy_millan.rio.to_raster(os.path.join(path2data_clean, fname))
+    vy_std.rio.to_raster(os.path.join(path2data_clean, 'zongo_vy-std_2017-2018.tif'))
+else: print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+
+
+#%%
+''' ##################################
+HOMOGENIZED DATA
+- fill all NaN values with 0
+- do something else for DEM?
+################################## '''
+
+target_res = 25 # meter
+target_crs = 'EPSG:32719'
+da_dummy_target = datafuncs.create_regular_dummy_grid(da_h_2012, grid_res=target_res, crs=target_crs, unit='m', add_buffer=120)
+
+## check bounds by simple plot
+# da_dummy_target.plot.imshow()
+# zongo_outline.boundary.plot(ax=plt.gca())
+
+
+
+
+#%%
+''' ##################################
+Make Elevation bins
+--> 50 m binstep
+--> based on earliest DEM if multiple available (assuming glacier is retreating, so earliest DEM has highest elevations)
+--> do for both CLEAN and HOMOGNEIZED data; so possibly also resampling to different resolution
+##################################
+'''
+da_dem_avg = xr.concat([da_dem_2006, da_dem_2013], dim='time').mean(dim='time').load() # is already at target res of 2m; use 'load' to mkae sure it's not a dask array anymore (gives error)
+
+hmin = da_dem_avg.min().item()
+hmax = da_dem_avg.max().item()
+
+## for HOMOGENIZED: do not downsample elev-bin dataArray, but do new binning on donwsampled DEM
+da_elev_bins, elev_bin_edges = datafuncs.dicretize_elevation_bins(da_dem_avg,
+                                                     hmin=hmin, hmax=hmax,
+                                                     binstep=50)
+
+print('--- elev bins ---')
+print(f'.. min max DEM: {np.round(hmin,0):.0f} to {np.round(hmax,0):.0f}')
+print('.. bin edges: ', elev_bin_edges)
+
+## save to CLEAN directory
+fname = 'zongo_elev-bins.tif'
+if not os.path.exists(os.path.join(path2data_clean, fname)):
+    da_elev_bins.rename('elevation_bins').rio.to_raster(os.path.join(path2data_clean, fname))
+
+#%%
+''' ##################################
+Outlines to MASK
+--> multi year available
+--> make icemask
+##################################
+'''
+
+gdf_outline1 = gpd.read_file(os.path.join(path2data_clean, 'zongo_outline-2006.shp'))
+gdf_outline2 = gpd.read_file(os.path.join(path2data_clean, 'zongo_outline-2013.shp'))
+da_icemask1 = (da_dummy_target * 2006).rio.clip(gdf_outline1.geometry, drop=False) 
+da_icemask2 = (da_dummy_target * 2013).rio.clip(gdf_outline2.geometry, drop=False)
+# gdf_outline2 = gdf_2017; year2 = 2017
+
+# da_outline_mask1 = (da_dummy_target*year1).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+# da_outline_mask2 = (da_dummy_target*year2).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+## combine to single dataArray
+da_outline_mask = xr.concat([da_icemask1, da_icemask2], 
+                            dim='time').max(dim='time') 
+
+#%%
+''' ##################################
+ASSEMBLE NETCDF
+- DEM
+- thickness
+- vx
+- vy
+- dhdt
+- bedrock
+- outline: as mask
+Fill NaN values with another nodata value 
+--> can be 0 for all variables except DEM and bedrock, so need to make sure these don't have missing values
+##################################
+'''
+
+
+## initial check that all variables have the same CRS, resolution and shape
+## TO UPDATE 
+da_var_dict = {'bedrock':da_bedrock_filled.copy(),
+                'DEM': da_dem_avg.copy(),
+                'elevation_bins': da_elev_bins.copy(),
+                'thickness': da_h_2012.copy(),
+                'dhdt': da_dhdt.copy(),
+                'vx': vx_millan.copy(),
+                'vy': vy_millan.copy(),
+                'icemask': da_outline_mask.copy(),
+}
+## resample to target grid where necessary
+for varname , var in da_var_dict.items():
+    print(varname)
+    if var.rio.resolution()[0] != target_res:
+        print(f'.. resampling {varname} from {var.rio.resolution()[0]} m to {target_res} m')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+        ## put back in dictionary
+        da_var_dict[varname] = var_target_res
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+    else: ## still resample, so I get no accidental geotransform issues from floating point precisin thingies
+        print('.. updating coords')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+        da_var_dict[varname] = var_target_res
+    
+    if var_target_res.shape != da_dummy_target.shape:
+        raise ValueError(f"Shape of {varname} does not match target shape: {var_target_res.shape} vs {da_dummy_target.shape}")
+    
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_dict.values()), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_dict.values()), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_dict.values()), "Not all variables have the same shape"
+
+
+'''
+# SET ATTRIBUTES OF VARIABLES
+Handle NaN values 
+'''
+
+da_outline_mask = (da_var_dict['icemask'].copy()
+                #    .fillna(0) # fill NaN values with 0 (outside outline)
+                   .rename('icemask')
+                   .assign_attrs({'long_name':'Glacier Outline Mask',
+                                  'units':'year',
+                                  'crs':target_crs,
+                                  'timestamp':'2021, 2023, 2025',
+                                  'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
+                                  'nodata': 0})
+                    .rio.write_crs(target_crs)
+)
+
+
+# DEM and Bedrock: should not have NaN values 
+# if da_dem_hmg.isnull().any():
+#     # raise ValueError("DEM has NaN values.")
+#     da_dem_hmg = da_dem_hmg.fillna(-999) # fill NaN values with -999 
+# else: 
+da_dem_hmg = (da_var_dict['DEM'].copy()
+                # .fillna(-999)
+                .rename('DEM') 
+                .assign_attrs({'long_name':'Elevation',
+                                'units':'m',
+                                'crs':target_crs,
+                                'timestamp':'2021-2025',
+                                'description':'Average elevation data from annual DEMs between 2021-2025.'
+                                })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs(target_crs)
+    )
+
+# if da_bedrock_hmg.isnull().any():
+#     # raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
+#     # da_bedrock_hmg = da_bedrock_hmg.fillna(-999) # fill NaN values with 0
+# else: 
+da_bedrock_hmg = (da_var_dict['bedrock'].copy()
+                    # .fillna(-999) # fill NaN values with -999
+                    .rename('bedrock')
+                    .assign_attrs({'long_name':'Bedrock Elevation',
+                                   'units':'m',
+                                   'crs':target_crs,
+                                   'timestamp':'2021',
+                                   'description':'Bedrock elevation, calculated as DEM-thickness. Where thickness is 0, bedrock is set to DEM value.',
+                                   })
+                    # .drop_vars('spatial_ref')
+                    .rio.write_crs(target_crs)
+    )
+
+# if da_elev_bins_hmg.isnull().any():
+#     raise ValueError("Elevation bins has NaN values (since DEM has them), cannot assign nodata value of 0.")
+# else: 
+da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
+                    # .fillna(-999) # fill NaN values with -999
+                    .rename('elevation_bins')
+                    .assign_attrs({'long_name':'Elevation Bins',
+                                  'units':'m',
+                                  'crs':target_crs,
+                                  'timestamp':'2021-2025',
+                                  'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin. Obtained from average DEM between 2021-2025.'
+                                  })
+                    .rio.write_crs(target_crs)
+)
+
+## thickness, dhdt, velo: can fill NaN with 0
+da_thickness_hmg = (da_var_dict['thickness'].copy()
+                    .fillna(0)
+                    .rename('thickness')
+                    .assign_attrs({'long_name':'Ice Thickness',
+                                   'units':'m',
+                                   'crs':target_crs,
+                                   'timestamp':'2021',
+                                   'description':'ice thickness interpolated from airborne GPR (UAV). Missing/NaN values were filled with 0.',
+                                   'nodata': 0})
+                .rio.write_crs(target_crs)
+                    )
+da_dhdt_hmg = (da_var_dict['dhdt'].copy()
+               .fillna(0)
+               .rename('dhdt')
+               .assign_attrs({'long_name':'Surface Elevation Change',
+                              'units':'m/year',
+                              'crs':target_crs,
+                              'timestamp':'2021-2025',
+                              'description':'Annual elevation change. Missing/NaN values were filled with 0.',
+                              'nodata': 0})
+                .rio.write_crs(target_crs)
+               )
+
+da_vx_hmg = (da_var_dict['vx'].copy()
+             .fillna(0)
+             .rename('vx')
+             .assign_attrs({'long_name': 'Surface ice velocity (x-component)',
+                            'units':'m/year',
+                            'crs':target_crs,
+                            'timestamp':'2022-2023',
+                            'description':'Velocity for the period 2022-2023. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
+
+da_vy_hmg = (da_var_dict['vy'].copy()
+             .fillna(0)
+             .rename('vy')
+             .assign_attrs({'long_name': 'Surface ice velocity (y-component)',
+                            'units':'m/year',
+                            'crs':target_crs,
+                            'timestamp':'2022-2023',
+                            'description':'Velocity for the period 2022-2023. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
+
+#%%
+
+## final check that everything is still homogenized 
+
+da_var_list = [ da_bedrock_hmg,
+                da_dem_hmg, 
+                da_elev_bins_hmg,
+                da_thickness_hmg,
+                da_dhdt_hmg,
+                da_vx_hmg,
+                da_vy_hmg,
+                da_outline_mask,
+                ]
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_list), "Not all variables have the same shape"
+
+### final NaN check: no NaN values for within-glacier bounds allowed
+for da in da_var_list:
+    count_invalid = datafuncs.count_nan_values_in_glacier(da, gdf_outline1)
+    if count_invalid > 0:
+        print(f"Warning: There are still {count_invalid} NaN values in {da.name} after interpolation and filling.")
+
+
+
+ds_glacier_hmg = (xr.combine_by_coords(da_var_list, 
+                                       compat='no_conflicts')
+                    .assign_attrs({'title':'homogenized glacier observation data',
+                               'grid_resolution':str(da_dummy_target.rio.resolution()),
+                               'description':'see attributes of each variable',
+                               'timestamp':'',
+                            #    'nodata': 0,
+                    })
+                    .rio.set_spatial_dims(x_dim="x", y_dim="y") # Make sure spatial dims are known
+                    # Write CRS and CF grid mapping to the whole dataset
+                    .rio.write_crs(target_crs)
+                    .rio.write_grid_mapping("spatial_ref")
+                    .rio.write_transform()
+)
+
+
+# Force each real data variable to point to spatial_ref
+for var in ds_glacier_hmg.data_vars:
+    if var != "spatial_ref":
+        ds_glacier_hmg[var].attrs["grid_mapping"] = "spatial_ref"
+
+## check for NaN values:
+# da_bedrock_hmg.plot.imshow()
+# gdf_outline1.boundary.plot(ax=plt.gca())
+
+#%%
+'''# check values by plotting
+'''
+# for var in ds_glacier_hmg.data_vars:
+#     da_plot = ds_glacier_hmg[var]
+#     # print(da_plot)
+#     fig,ax=plt.subplots(figsize=(6,5))
+    
+#     da_plot.plot.imshow(ax=ax)
+# ds_glacier_hmg
+# Set the no-data value in the encoding dictionary
+
+#%%
+'''## save to netcdf'''
+
+# ## clean fill/missing values before encoding --> no just keep original NaN coding.
+# for var in ds_glacier_hmg.data_vars:
+#     ds_glacier_hmg[var].attrs.pop("_FillValue", None)
+#     ds_glacier_hmg[var].attrs.pop("missing_value", None)
+#     ds_glacier_hmg[var].encoding.pop("_FillValue", None)
+#     ds_glacier_hmg[var].encoding.pop("missing_value", None)
+
+## encoding settings for compression and data type; same for all variables
+comp = {"zlib": True, 
+        "complevel": 5,  ## level of compression; higher number = more compression but slower read/write
+        "dtype": "float32", ## 7 digits of precision 
+        # "_FillValue": np.float32(-999), ## for remaining NaN values
+        }
+encoding = {var: comp for var in ds_glacier_hmg.data_vars if var != "spatial_ref"}  # Exclude spatial_ref from encoding
+encoding["spatial_ref"] = {}  # No compression for spatial_ref
+
+fname_nc = 'zongo_glacier_observations.nc'
+
+try:
+    print(f'--> saving homogenized data to netcdf "{fname_nc}"; overwriting if file exists')
+    ds_glacier_hmg.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+    )
+    ds_glacier_hmg.close()
+
+except PermissionError:
+    print('--> CHECK INPUT WINDOW')
+    answ = input(f"PermissionError to write {fname_nc}. Input Y to overwrite")
+    if answ == 'Y' or answ == 'y':
+        print('..removing existing and re-saving file')
+        os.remove(os.path.join(path2data_homog, fname_nc))
+        ds_glacier_hmg.to_netcdf(os.path.join(path2data_homog, fname_nc), 
+                            mode='w', format='NETCDF4', 
+                            engine='netcdf4',
+                            encoding=encoding ## don't use encoding; although it compresses data size, it loses CRS info 
+        )
+        ds_glacier_hmg.close()
+    else: print('..aborted saving file')
+
+
+#%% check values by loading saved data & plotting
+
+with xr.open_dataset(
+        os.path.join(path2data_homog, fname_nc),
+        decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
+    ) as ds_glacier_loaded:
+    
+    print('CRS:', ds_glacier_loaded.rio.crs)
+    print('spatial_ref attrs:', ds_glacier_loaded["spatial_ref"].attrs)
+    assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
+
+## check values by plotting
+fig,axs=plt.subplots(2,4, figsize=(20,8))
+row,col = 0,0
+for var, cmap in zip(ds_glacier_loaded.data_vars, ['cividis','cividis','cividis','Blues',
+                                                   'RdBu','PiYG','PiYG','viridis']):
+    if var == 'spatial_ref':
+        continue  # Skip plotting the spatial_ref variable
+    if var == 'dhdt':
+        vmin,vmax = -5,5; 
+    else:
+        vmin,vmax=None,None
+    da_plot = ds_glacier_loaded[var]
+    # print(da_plot)
+    # fig,ax=plt.subplots(figsize=(6,5))
+    ax=axs[row,col]
+    da_plot.plot.imshow(ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, cbar_kwargs={'shrink': 0.7})
+    ax.set_title(var)
+    col+=1
+    if col >= 4:
+        col = 0
+        row += 1
+[ax.set_aspect('equal') for ax in axs.flatten()];
+[ax.set_axis_off() for ax in axs.flatten()];
+
+fig.savefig(os.path.join(path2data_homog, 'zongo_netcdf_vars.png'), dpi=300)
+# %%
+
 # %%
