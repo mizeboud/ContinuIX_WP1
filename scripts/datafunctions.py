@@ -48,7 +48,7 @@ def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampl
     return img_repr_match.transpose(*dims) # transpose dimension order back to original
 
 
-def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m'):
+def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m', add_buffer=None):
     ''' Create a regular dummy grid with specified resolution and CRS, based on the extent of the input dataset/dataArray. 
     This can be used as a reference grid for reprojecting/matching other datasets. 
     Parameters:
@@ -60,6 +60,8 @@ def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m'):
     if not crs:
         crs = ds.rio.crs
     x0 = ds.x.min().item() ; x1 = ds.x.max().item() ; y0 = ds.y.min().item() ; y1 = ds.y.max().item()
+    if add_buffer:
+        x0 -= add_buffer; x1 += add_buffer; y0 -= add_buffer; y1 += add_buffer
     # x0 = np.floor(x0/grid_res)*grid_res; x1 = np.floor(x1/grid_res)*grid_res; 
     # y0 = np.floor(y0/grid_res)*grid_res; y1 = np.floor(y1/grid_res)*grid_res
     x_seq = np.arange(x0, x1+grid_res, step=grid_res )
