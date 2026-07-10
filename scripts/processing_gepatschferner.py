@@ -878,6 +878,15 @@ if not os.path.exists(os.path.join(path2data_clean, fname)):
 
 #%% 
 
+#%%
+''' ##################################
+Global uncertainties
+Thickness: from H profiles, using thk_min and thk_max to infer [thk] uncertainty range. This is provided over all points --> take average as global value
+################################## '''
+
+'''# unct_thickness : unkown '''
+'''unct_dhdt : unkown '''
+'''unct_velo : std from millan''' 
 
 
 #%%
@@ -920,14 +929,16 @@ Fill NaN values with another nodata value
 
 ## initial check that all variables have the same CRS, resolution and shape
 ## TO UPDATE 
-da_var_dict = {'bedrock':da_bedrock.copy(),
-                'DEM': da_dem_2017_2m.copy(),
-                'elevation_bins': da_elev_bins_10m.copy(),
-                'thickness':da_thickness.copy(),
-                'dhdt': da_dhdt.copy(),
-                'vx': da_vx_filled.copy(),
-                'vy': da_vy_filled.copy(),
-                'icemask': da_outline_mask.copy(),
+da_var_dict = {'BED':da_bedrock.copy().rename('BED'),
+                'DEM': da_dem_2017_2m.copy().rename('DEM'),
+                'ELEVBINS': da_elev_bins_10m.copy().rename('ELEVBINS'),
+                'THK':da_thickness.copy().rename('THK'),
+                'DHDT': da_dhdt.copy().rename('DHDT'),
+                'VX': da_vx_filled.copy().rename('VX'),
+                'VY': da_vy_filled.copy().rename('VY'),
+                'ICEMASK': da_outline_mask.copy().rename('ICEMASK'),
+                'UNCT_VX': da_v_stdev_50m.copy().rename('UNCT_VX'),
+                'UNCT_VY': da_v_stdev_50m.copy().rename('UNCT_VY'),
 }
 ## resample to target grid where necessary
 for varname , var in da_var_dict.items():
@@ -957,11 +968,12 @@ assert all(da.shape == da_dummy_target.shape for da in da_var_dict.values()), "N
 Handle NaN values 
 '''
 
-da_outline_mask = (da_var_dict['icemask'].copy()
+da_outline_mask = (da_var_dict['ICEMASK'].copy()
                 #    .fillna(0) # fill NaN values with 0 (outside outline)
-                   .rename('icemask')
+                #    .rename('ICEMASK')
                    .assign_attrs({'long_name':'Glacier Outline Mask',
                                   'units':'year',
+                                  'uncertainty':'unknown',
                                   'crs':target_crs,
                                   'timestamp':'2006 and 2017',
                                   'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
@@ -977,9 +989,10 @@ da_outline_mask = (da_var_dict['icemask'].copy()
 # else: 
 da_dem_hmg = (da_var_dict['DEM'].copy()
                 # .fillna(-999)
-                .rename('DEM') 
+                # .rename('DEM') 
                 .assign_attrs({'long_name':'Elevation',
                                 'units':'m',
+                                  'uncertainty':'unknown',
                                 'crs':target_crs,
                                 'timestamp':'2017',
                                 'description':'Elevation data.'
@@ -992,11 +1005,12 @@ da_dem_hmg = (da_var_dict['DEM'].copy()
 #     # raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
 #     # da_bedrock_hmg = da_bedrock_hmg.fillna(-999) # fill NaN values with 0
 # else: 
-da_bedrock_hmg = (da_var_dict['bedrock'].copy()
+da_bedrock_hmg = (da_var_dict['BED'].copy()
                     # .fillna(-999) # fill NaN values with -999
-                    .rename('bedrock')
+                    # .rename('BED')
                     .assign_attrs({'long_name':'Bedrock Elevation',
                                    'units':'m',
+                                   'uncertainty':'unknown',
                                    'crs':target_crs,
                                    'timestamp':'2006',
                                    'description':'bedrock elevation, as provided.'
@@ -1008,11 +1022,12 @@ da_bedrock_hmg = (da_var_dict['bedrock'].copy()
 # if da_elev_bins_hmg.isnull().any():
 #     raise ValueError("Elevation bins has NaN values (since DEM has them), cannot assign nodata value of 0.")
 # else: 
-da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
+da_elev_bins_hmg = (da_var_dict['ELEVBINS'].copy()
                     # .fillna(-999) # fill NaN values with -999
-                    .rename('elevation_bins')
+                    # .rename('ELEVBINS')
                     .assign_attrs({'long_name':'Elevation Bins',
                                   'units':'m',
+                                  'uncertainty':'n/a',
                                   'crs':target_crs,
                                   'timestamp':'2017',
                                   'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin.'
@@ -1021,22 +1036,24 @@ da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
 )
 
 ## thickness, dhdt, velo: can fill NaN with 0
-da_thickness_hmg = (da_var_dict['thickness'].copy()
+da_thickness_hmg = (da_var_dict['THK'].copy()
                     .fillna(0)
-                    .rename('thickness')
+                    # .rename('THK')
                     .assign_attrs({'long_name':'Ice Thickness',
                                    'units':'m',
+                                  'uncertainty':'unknown',
                                    'crs':target_crs,
                                    'timestamp':'2006',
                                    'description':'ice thickness interpolated from GPR. Missing/NaN values were filled with 0.',
                                    'nodata': 0})
                 .rio.write_crs(target_crs)
                     )
-da_dhdt_hmg = (da_var_dict['dhdt'].copy()
+da_dhdt_hmg = (da_var_dict['DHDT'].copy()
                .fillna(0)
-               .rename('dhdt')
+            #    .rename('DHDT')
                .assign_attrs({'long_name':'Surface Elevation Change',
                               'units':'m/year',
+                                  'uncertainty':'unknown',
                               'crs':target_crs,
                               'timestamp':'2006-2017',
                               'description':'Annual elevation change. Missing/NaN values were filled with 0.',
@@ -1044,11 +1061,12 @@ da_dhdt_hmg = (da_var_dict['dhdt'].copy()
                 .rio.write_crs(target_crs)
                )
 
-da_vx_hmg = (da_var_dict['vx'].copy()
+da_vx_hmg = (da_var_dict['VX'].copy()
              .fillna(0)
-             .rename('vx')
+            #  .rename('VX')
              .assign_attrs({'long_name': 'Surface ice velocity (x-component)',
                             'units':'m/year',
+                            'uncertainty':'provided as grid UNCT_VX',
                             'crs':target_crs,
                             'timestamp':'2015-2017',
                             'description':'Average velocity for the period 2015-2017. Missing/NaN values were filled with 0.',
@@ -1057,11 +1075,12 @@ da_vx_hmg = (da_var_dict['vx'].copy()
                 .rio.write_crs(target_crs)
 )
 
-da_vy_hmg = (da_var_dict['vy'].copy()
+da_vy_hmg = (da_var_dict['VY'].copy()
              .fillna(0)
-             .rename('vy')
+            #  .rename('VY')
              .assign_attrs({'long_name': 'Surface ice velocity (y-component)',
                             'units':'m/year',
+                            'uncertainty':'provided as grid UNCT_VY',
                             'crs':target_crs,
                             'timestamp':'2015-2017',
                             'description':'Average velocity for the period 2015-2017. Missing/NaN values were filled with 0.',
@@ -1069,6 +1088,28 @@ da_vy_hmg = (da_var_dict['vy'].copy()
                             })
                 .rio.write_crs(target_crs)
 )
+
+da_vx_stdev_hmg = (da_var_dict['UNCT_VX'].copy()
+                   .assign_attrs({'long_name':'Surface Ice Velocity Standard Deviation',
+                                  'units':'m/year',
+                                  'uncertainty':'n/a',
+                                  'crs':target_crs,
+                                  'timestamp':'2015-2017',
+                                  'description': f'Standard deviation of surface ice velocity over 2015-2017. Universal between X or Y component.'
+                                  })
+                    .rio.write_crs(target_crs)
+)
+da_vy_stdev_hmg = (da_var_dict['UNCT_VY'].copy()
+                   .assign_attrs({'long_name':'Surface Ice Velocity Standard Deviation',
+                                  'units':'m/year',
+                                  'uncertainty':'n/a',
+                                  'crs':target_crs,
+                                  'timestamp':'2015-2017',
+                                  'description': f'Standard deviation of surface ice velocity over 2015-2017. Universal between X or Y component.'
+                                  })
+                    .rio.write_crs(target_crs)
+)
+
 
 #%%
 
@@ -1082,6 +1123,8 @@ da_var_list = [ da_bedrock_hmg,
                 da_vx_hmg,
                 da_vy_hmg,
                 da_outline_mask,
+                da_vx_stdev_hmg,
+                da_vy_stdev_hmg
                 ]
 assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
 assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
@@ -1116,7 +1159,6 @@ for var in ds_glacier_hmg.data_vars:
     if var != "spatial_ref":
         ds_glacier_hmg[var].attrs["grid_mapping"] = "spatial_ref"
 
-#%%
 '''# check values by plotting
 '''
 # for var in ds_glacier_hmg.data_vars:
@@ -1131,12 +1173,6 @@ for var in ds_glacier_hmg.data_vars:
 #%%
 '''## save to netcdf'''
 
-# ## clean fill/missing values before encoding --> no just keep original NaN coding.
-# for var in ds_glacier_hmg.data_vars:
-#     ds_glacier_hmg[var].attrs.pop("_FillValue", None)
-#     ds_glacier_hmg[var].attrs.pop("missing_value", None)
-#     ds_glacier_hmg[var].encoding.pop("_FillValue", None)
-#     ds_glacier_hmg[var].encoding.pop("missing_value", None)
 
 ## encoding settings for compression and data type; same for all variables
 comp = {"zlib": True, 
@@ -1175,6 +1211,9 @@ except PermissionError:
 
 #%% check values by loading saved data & plotting
 
+
+fname_nc = 'gepatschferner_glacier_observations.nc'
+
 with xr.open_dataset(
         os.path.join(path2data_homog, fname_nc),
         decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
@@ -1185,16 +1224,20 @@ with xr.open_dataset(
     assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
 
 ## check values by plotting
-fig,axs=plt.subplots(2,4, figsize=(20,8))
+fig,axs=plt.subplots(2,4, figsize=(16,8))
 row,col = 0,0
-for var in ds_glacier_loaded.data_vars:
-    if var == 'spatial_ref':
-        continue  # Skip plotting the spatial_ref variable
+for var, cmap, vminmax in zip(  ['BED',     'DEM',     'ELEVBINS', 'THK', 'DHDT', 'VX', 'VY',   'ICEMASK'],
+                                ['cividis','cividis','cividis',  'Blues', 'RdBu','PiYG','PiYG',  'viridis'],
+                                [(1.8e3, 4e3), (1.8e3, 4e3), (1.8e3, 4e3), (0,500),  (-5,5), (-100,100),(-100,100),None]):
+    if vminmax is not None:
+        vmin, vmax = vminmax
+    else:
+        vmin, vmax = None, None
+
     da_plot = ds_glacier_loaded[var]
-    # print(da_plot)
-    # fig,ax=plt.subplots(figsize=(6,5))
+
     ax=axs[row,col]
-    da_plot.plot.imshow(ax=ax, cbar_kwargs={'shrink': 0.7})
+    da_plot.plot.imshow(ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, cbar_kwargs={'shrink': 0.7})
     ax.set_title(var)
     col+=1
     if col >= 4:
@@ -1203,7 +1246,10 @@ for var in ds_glacier_loaded.data_vars:
 [ax.set_aspect('equal') for ax in axs.flatten()];
 [ax.set_axis_off() for ax in axs.flatten()];
 
-fig.savefig(os.path.join(path2data_homog, 'gepatsch_netcdf_vars.png'), dpi=300)
+fig.savefig(os.path.join(path2data_homog, 'gepatschferner_netcdf_vars.png'), dpi=300)
+# %%
+
+
 # %%
 
 # %%

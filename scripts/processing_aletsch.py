@@ -305,13 +305,36 @@ Fill NaN values with another nodata value
 --> can be 0 for all variables except DEM and bedrock, so need to make sure these don't have missing values
 ##################################
 '''
+
+
+target_res = 10 # meter
+target_crs = 'EPSG:2056'
+
+
+
+''' -- ICEMASK --- '''
 gdf_outline1 = gpd.read_file(os.path.join(path2data_clean,'aletsch_outline_20170901.shp'))
 gdf_outline2 = gpd.read_file(os.path.join(path2data_clean,'aletsch_outline_20230823.shp'))
 
+''' -- DUMMY GRID ---'''
+da_dummy_target = datafuncs.create_regular_dummy_grid(da_dem17, 
+                                                      grid_res=target_res, 
+                                                      crs=target_crs, unit='m',
+                                                      ) 
+
+# da_dem17_clip = da_dem17.rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=True) # drop=True to only keep the pixels inside the outline
+# da_dummy_target = create_regular_dummy_grid(da_dem17_clip, 
+#                                                       grid_res=target_res, 
+#                                                       crs=target_crs, unit='m',
+#                                                       add_buffer=1000) # buffer to make sure the dummy grid covers the glacier area
+
+
+
+#%%
 ## burn outline into raster mask
-da_dummy = da_dem17.copy(data=np.ones_like(da_dem17.values))
-da_outline_mask1 = (da_dummy*2017).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
-da_outline_mask2 = (da_dummy*2023).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+# da_dummy = da_dem17.copy(data=np.ones_like(da_dem17.values))
+da_outline_mask1 = (da_dummy_target*2017).rio.clip(gdf_outline1.geometry, gdf_outline1.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
+da_outline_mask2 = (da_dummy_target*2023).rio.clip(gdf_outline2.geometry, gdf_outline2.crs, drop=False) # drop=False to keep the same grid and not drop the pixels outside the outline (which will be set to nodata)
 ## fill mask NaN with 0
 da_outline_mask = xr.concat([da_outline_mask1, da_outline_mask2], dim='time'
                             )#.fillna(0) # fill NaN values with 0 (outside outline)
@@ -329,112 +352,248 @@ da_outline_mask = (da_outline_mask.copy()
                     .rio.write_crs('EPSG:2056')
 )
 
+#%%
+''' ##################################
+Global uncertainties
+Thickness: from H profiles, using thk_min and thk_max to infer [thk] uncertainty range. This is provided over all points --> take average as global value
+################################## '''
+
+'''# unct_thickness '''
+h_profile_diff = gdf_thickness['thk_max'] - gdf_thickness['thk_min']
+unct_thickness = h_profile_diff.mean() / 2 # half of the range is the uncertainty
+print(f'Global uncertainty in thickness: {unct_thickness:.2f} m')
+
+
+'''unct_dhdt --> unknown '''
+'''unct_velo --> has stddev''' 
+
+
+#%%
+''' ##################################
+RESAMPLING TO TARGET GRID
+################################## '''
+
+## initial check that all variables have the same CRS, resolution and shape
+da_var_dict = {'BED':da_bedrock17_filled.copy().rename('BED'),
+                'DEM': da_dem17.copy().rename('DEM'),
+                'ELEVBINS': da_elev_bins.copy().rename('ELEVBINS'),
+                'THK':da_H17_matched.copy().rename('THK'),
+                'DHDT': da_dhdt.copy().rename('DHDT'),
+                'VX': da_vx_10m.copy().rename('VX'),
+                'VY': da_vy_10m.copy().rename('VY'),
+                'ICEMASK': da_outline_mask.copy().rename('ICEMASK'),
+                'UNCT_VX': da_vx_stdev_2056.copy().rename('UNCT_VX'),
+                'UNCT_VY': da_vy_stdev_2056.copy().rename('UNCT_VY'),
+}
+## resample to target grid where necessary
+for varname , var in da_var_dict.items():
+    if var.rio.resolution()[0] != target_res:
+        print(f'.. resampling {varname} from {var.rio.resolution()[0]} m to {target_res} m')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+        ## put back in dictionary
+        da_var_dict[varname] = var_target_res
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+    if var.shape != da_dummy_target.shape:
+        print(f'.. reshaping {varname} from {var.shape} to {da_dummy_target.shape}')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+        ## put back in dictionary
+        da_var_dict[varname] = var_target_res
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+        # raise ValueError(f"Shape of {varname} does not match target shape: {var.shape} vs {da_dummy_target.shape}")
+    ## for Aletsch: still some coord errors: do resampling anyway
+    var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+    ## put back in dictionary
+    da_var_dict[varname] = var_target_res
+    
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_dict.values()), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_dict.values()), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_dict.values()), "Not all variables have the same shape"
+
+
+#%%
+
 
 ## set attributes
 
-# DEM and Bedrock: should not have NaN values 
-if da_dem17.isnull().any():
-    raise ValueError("DEM has NaN values.")
-else: da_dem_10m = (da_dem17.copy()
+
+'''
+# SET ATTRIBUTES OF VARIABLES
+Handle NaN values 
+'''
+
+da_outline_mask = (da_var_dict['ICEMASK'].copy()
+                #    .fillna(0) # fill NaN values with 0 (outside outline)
+                #    .rename('ICEMASK')
+                   .assign_attrs({'long_name':'Glacier Outline Mask',
+                                  'units':'year',
+                                  'uncertainty':'n/a',
+                                  'crs':'EPSG:2056',
+                                  'timestamp':'20170901 and 20230823',
+                                  'description': 'Value is max year of valid glaciated pixel; 0 for non-glaciated pixels.',
+                                  })
+                    .rio.write_crs(target_crs)
+)
+
+
+# da_dem_hmg = (da_var_dict['DEM'].copy()
+    #             # .fillna(-999)
+    #             .rename('DEM') 
+    #             .assign_attrs({'long_name':'Elevation',
+    #                             'units':'m',
+    #                             'crs':target_crs,
+    #                             'timestamp':'2017',
+    #                             'description':'Elevation data.'
+    #                             })
+    #                 # .drop_vars('spatial_ref')
+    #                 .rio.write_crs(target_crs)
+    # )
+
+# # DEM and Bedrock: should not have NaN values 
+# if da_dem17.isnull().any():
+#     raise ValueError("DEM has NaN values.")
+# else: da_dem_10m = (da_dem17.copy()
+da_dem_hmg = (da_var_dict['DEM'].copy()
                 .rename('DEM') 
                 .assign_attrs({'long_name':'Elevation',
                                 'units':'m',
+                                'uncertainty':'unknown',
                                 'crs':'EPSG:2056',
                                 'timestamp':'20170901',
                                 'description':'Elevation data.'
                                 })
                     # .drop_vars('spatial_ref')
-                    .rio.write_crs('EPSG:2056')
+                    .rio.write_crs(target_crs)
     )
 
-if da_bedrock17_filled.isnull().any():
-    raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
-else: da_bedrock_10m = (da_bedrock17_filled.copy()
-                    .rename('bedrock')
+# if da_bedrock17_filled.isnull().any():
+#     raise ValueError("Bedrock has NaN values, cannot assign nodata value of 0.")
+# else: da_bedrock_10m = (da_bedrock17_filled.copy()
+da_bedrock_hmg = (da_var_dict['BED'].copy()
+                    # .rename('BED')
                     .assign_attrs({'long_name':'Bedrock Elevation',
                                    'units':'m',
+                                   'uncertainty':'unknown',
                                    'crs':'EPSG:2056',
                                    'timestamp':'20170901',
                                    'description':'bedrock calculated from DEM and H. Where H=0, bedrock=DEM.'
                                    })
                     # .drop_vars('spatial_ref')
-                    .rio.write_crs('EPSG:2056')
+                    .rio.write_crs(target_crs)
     )
 
 ## thickness, dhdt, velo: can fill NaN with 0
-da_thickness_10m = (da_H17_matched.fillna(0).copy()
-                    .rename('thickness')
+# da_thickness_10m = (da_H17_matched.fillna(0).copy()
+da_thickness_hmg = (da_var_dict['THK'].copy()
+                    .fillna(0)
+                    # .rename('THK')
                     .assign_attrs({'long_name':'Ice Thickness',
                                    'units':'m',
+                                   'uncertainty': f'+- {unct_thickness:.1f} m',
                                    'crs':'EPSG:2056',
                                    'timestamp':'20170901',
                                    'description':'ice thickness interpolated from GPR. Missing/NaN values were filled with 0.',
                                    'nodata': 0})
                 # .drop_vars('spatial_ref')
-                .rio.write_crs('EPSG:2056')
+                .rio.write_crs(target_crs)
                     )
-da_dhdt_10m = (da_dhdt.fillna(0).copy()
-               .rename('dhdt')
+# da_dhdt_10m = (da_dhdt.fillna(0).copy()
+da_dhdt_hmg = (da_var_dict['DHDT'].copy()
+               .fillna(0)
+            #    .rename('DHDT')
                .assign_attrs({'long_name':'Surface Elevation Change',
                               'units':'m/year',
+                              'uncertainty':'unknown',
                               'crs':'EPSG:2056',
                               'timestamp':'20170901-20230823',
                               'description':'annual elevation change. Missing/NaN values were filled with 0.',
                               'nodata': 0})
                 # .drop_vars('spatial_ref')
-                .rio.write_crs('EPSG:2056')
+                .rio.write_crs(target_crs)
                )
 
-da_vx_10m = (da_vx_10m.fillna(0).copy()
-             .rename('vx')
+# da_vx_10m = (da_vx_10m.fillna(0).copy()
+da_vx_hmg = (da_var_dict['VX'].copy()
+             .fillna(0)
+            #  .rename('VX')
              .assign_attrs({'long_name': 'surface ice velocity (x-component)',
                             'units':'m/year',
+                            'uncertainty':'provided as grid, UNCT_VX',
                             'crs':'EPSG:2056',
                             'timestamp':'2011-2019',
                             'description':'median velocity over 2011-2019. Missing/NaN values were filled with 0.',
                             'nodata': 0
                             })
                 # .drop_vars('spatial_ref')
-                .rio.write_crs('EPSG:2056')
+                .rio.write_crs(target_crs)
 )
 
-da_vy_10m = (da_vy_10m.fillna(0).copy()
-             .rename('vy')
+# da_vy_10m = (da_vy_10m.fillna(0).copy()
+da_vy_hmg = (da_var_dict['VY'].copy()
+             .fillna(0)
+            #  .rename('VY')
              .assign_attrs({'long_name': 'surface ice velocity (y-component)',
                             'units':'m/year',
+                            'uncertainty':'provided as grid, UNCT_VY',
                             'crs':'EPSG:2056',
                             'timestamp':'2011-2019',
                             'description':'median velocity over 2011-2019. Missing/NaN values were filled with 0.',
                             'nodata': 0
                             })
-                .drop_vars('spatial_ref')
-                .rio.write_crs('EPSG:2056')
+                # .drop_vars('spatial_ref')
+                .rio.write_crs(target_crs)
 )
 
-da_elev_bins_10m = (da_elev_bins.copy()
-                   .rename('elevation_bins')
+# da_elev_bins_10m = (da_elev_bins.copy()
+da_elev_bins_hmg = (da_var_dict['ELEVBINS'].copy()
+                #    .rename('ELEVBINS')
                    .assign_attrs({'long_name':'Elevation Bins',
                                   'units':'m',
+                                  'uncertainty':'n/a',
                                   'crs':'EPSG:2056',
                                   'timestamp':'20170901',
                                   'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin.'
                                   })
-                    .rio.write_crs('EPSG:2056')
+                    .rio.write_crs(target_crs)
+)
+
+da_vx_stdev_hmg = (da_var_dict['UNCT_VX'].copy()
+                   .assign_attrs({'long_name':'Surface Ice Velocity (x-component) Standard Deviation',
+                                  'units':'m/year',
+                                  'uncertainty':'n/a',
+                                  'crs':'EPSG:2056',
+                                  'timestamp':'2011-2019',
+                                  'description': f'Standard deviation of surface ice velocity (x-component) over 2011-2019.'
+                                  })
+                    .rio.write_crs(target_crs)
+)
+da_vy_stdev_hmg = (da_var_dict['UNCT_VY'].copy()
+                   .assign_attrs({'long_name':'Surface Ice Velocity (y-component) Standard Deviation',
+                                  'units':'m/year',
+                                  'uncertainty':'n/a',
+                                  'crs':'EPSG:2056',
+                                  'timestamp':'2011-2019',
+                                  'description': f'Standard deviation of surface ice velocity (y-component) over 2011-2019.'
+                                  })
+                    .rio.write_crs(target_crs)
 )
 
 
-da_var_list = [ da_bedrock_10m,
-                da_dem_10m, 
-                da_elev_bins_10m,
-                da_thickness_10m,
-                da_dhdt_10m,
-                da_vx_10m,
-                da_vy_10m,
+da_var_list = [ da_bedrock_hmg,
+                da_dem_hmg, 
+                da_elev_bins_hmg,
+                da_thickness_hmg,
+                da_dhdt_hmg,
+                da_vx_hmg,
+                da_vy_hmg,
+                da_vx_stdev_hmg,
+                da_vy_stdev_hmg,
                 da_outline_mask,
                 ]
-assert all(da.rio.crs == da_dem_10m.rio.crs for da in da_var_list), "Not all variables have the same CRS"
-assert all(da.rio.resolution() == da_dem_10m.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
-assert all(da.shape == da_dem_10m.shape for da in da_var_list), "Not all variables have the same shape"
+assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
+assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
+assert all(da.shape == da_dummy_target.shape for da in da_var_list), "Not all variables have the same shape"
 
 ds_aletsch_10m = (xr.combine_by_coords(da_var_list, 
                                        compat='no_conflicts')
@@ -446,7 +605,7 @@ ds_aletsch_10m = (xr.combine_by_coords(da_var_list,
                     })
                     .rio.set_spatial_dims(x_dim="x", y_dim="y") # Make sure spatial dims are known
                     # Write CRS and CF grid mapping to the whole dataset
-                    .rio.write_crs("EPSG:2056")
+                    .rio.write_crs(target_crs)
                     .rio.write_grid_mapping("spatial_ref")
                     .rio.write_transform()
 )
@@ -505,6 +664,8 @@ except PermissionError:
 
 #%% check values by loading saved data & plotting
 
+fname_nc = 'aletsch_glacier_observations.nc'
+
 with xr.open_dataset(
         os.path.join(path2data_homog, fname_nc),
         decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
@@ -517,16 +678,14 @@ with xr.open_dataset(
 ## check values by plotting
 fig,axs=plt.subplots(2,4, figsize=(16,8))
 row,col = 0,0
-for var, cmap in zip(ds_glacier_loaded.data_vars, ['cividis','cividis','cividis','Blues',
-                                                   'RdBu','PiYG','PiYG','viridis']):
-    if var == 'spatial_ref':
-        continue  # Skip plotting the spatial_ref variable
-    if var == 'dhdt':
-        vmin,vmax = -5,5;
-    elif var == 'vx' or var == 'vy':
-        vmin,vmax = -100,100;
+for var, cmap, vminmax in zip(  ['BED','DEM',     'ELEVBINS', 'THK', 'DHDT', 'VX', 'VY',   'ICEMASK'],
+                                ['cividis','cividis','cividis',           'Blues',    'RdBu','PiYG','PiYG','viridis'],
+                                [(1e3, 4e3), (1e3, 4e3),  (1e3, 4e3),     (0,500),  (-5,5), (-100,100),(-100,100),None]):
+    if vminmax is not None:
+        vmin, vmax = vminmax
     else:
-        vmin,vmax=None,None
+        vmin, vmax = None, None
+
     da_plot = ds_glacier_loaded[var]
     # print(da_plot)
     # fig,ax=plt.subplots(figsize=(6,5))
@@ -540,7 +699,7 @@ for var, cmap in zip(ds_glacier_loaded.data_vars, ['cividis','cividis','cividis'
 [ax.set_aspect('equal') for ax in axs.flatten()];
 [ax.set_axis_off() for ax in axs.flatten()];
 
-fig.savefig(os.path.join(path2data_homog, 'aletsch_netcdf_vars.png'), dpi=300)
+# fig.savefig(os.path.join(path2data_homog, 'aletsch_netcdf_vars.png'), dpi=300)
 
 
 # ds_aletsch_10m

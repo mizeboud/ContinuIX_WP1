@@ -260,24 +260,26 @@ da_geoid_hofsj_3057 = da_geoid_iceland_3057.rio.clip_box(*hofsj_extent, crs=targ
 da_geoid_hofsj_2m = datafuncs.reproject_match_grid(da_dem_2013, da_geoid_hofsj_3057, resample_method=rio.enums.Resampling.nearest, nodata_value=np.nan)
 ds_DEM_ortho = ds_DEM - da_geoid_hofsj_2m
 
-#%% plot DEM comparison
-fig,axs=plt.subplots(3,3,figsize=(16,14))
-col=0
-for year in [2013, 2020, 2023]:
-    ax=axs[0,col]
-    ds_DEM.sel(time=year).isel(x=slice(7000,8000), y=slice(7000,8000)
-                               ).plot.imshow(ax=ax, cmap='terrain', vmin=1000, vmax=2000)
-    ax.set_title(f'DEM {year} (ellipsoid)')
-    ax=axs[1,col]
-    ds_DEM_ortho.sel(time=year).isel(x=slice(7000,8000), y=slice(7000,8000)).plot.imshow(ax=ax, cmap='terrain', vmin=1000, vmax=2000)
-    ax.set_title(f'DEM {year} (orthometric)')
-    ax=axs[2,col]
-    (ds_DEM_ortho.sel(time=year)-ds_DEM.sel(time=year)
-            ).isel(x=slice(7000,8000), y=slice(7000,8000)
-                   ).plot.imshow(ax=ax, cmap='Reds_r', )#vmin=-70, vmax=-60)
-    ax.set_title(f'Diff {year} (orthometric - ellipsoid)')
-    col += 1
+# #%% plot DEM comparison
+# fig,axs=plt.subplots(3,3,figsize=(16,14))
+# col=0
+# for year in [2013, 2020, 2023]:
+#     ax=axs[0,col]
+#     ds_DEM.sel(time=year).isel(x=slice(7000,8000), y=slice(7000,8000)
+#                                ).plot.imshow(ax=ax, cmap='terrain', vmin=1000, vmax=2000)
+#     ax.set_title(f'DEM {year} (ellipsoid)')
+#     ax=axs[1,col]
+#     ds_DEM_ortho.sel(time=year).isel(x=slice(7000,8000), y=slice(7000,8000)).plot.imshow(ax=ax, cmap='terrain', vmin=1000, vmax=2000)
+#     ax.set_title(f'DEM {year} (orthometric)')
+#     ax=axs[2,col]
+#     (ds_DEM_ortho.sel(time=year)-ds_DEM.sel(time=year)
+#             ).isel(x=slice(7000,8000), y=slice(7000,8000)
+#                    ).plot.imshow(ax=ax, cmap='Reds_r', )#vmin=-70, vmax=-60)
+#     ax.set_title(f'Diff {year} (orthometric - ellipsoid)')
+#     col += 1
     
+
+
 #%% Thickness
 ''' ##################################
 Thickness 
@@ -311,11 +313,11 @@ for year in ['2013', '2020', '2023']:
     da_thickness = da_thickness.where(da_thickness>0, other=np.nan)
 
     fname = f'hofsjokull_h_{year}.tif'
-    # if not os.path.exists(os.path.join(path2data_clean, fname)):
-    print(f'Saving {fname} to cleaned data dir')
-    da_thickness.rio.to_raster(os.path.join(path2data_clean, fname))
-    # else:
-    #     print(f"File {fname} already exists in cleaned data directory. Skipping save.")
+    if not os.path.exists(os.path.join(path2data_clean, fname)):
+        print(f'Saving {fname} to cleaned data dir')
+        da_thickness.rio.to_raster(os.path.join(path2data_clean, fname))
+    else:
+        print(f"File {fname} already exists in cleaned data directory. Skipping save.")
 
 
 
@@ -428,30 +430,29 @@ ds_hofsj_vx_std['vx'].attrs['units'] = 'm/yr'
 ds_hofsj_vy_std['vy'].attrs['units'] = 'm/yr'
 
 
-#%%
-'''## plot velocity components for all years'''
-ds_hofsj_vx['vx'].plot.imshow(cmap='PiYG', col='time', col_wrap=2, vmin=-50, vmax=50, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-## get axes
-axs = plt.gcf().axes[:-1] # exclude colorbar axis
-[gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
-[ax.set_axis_off() for ax in axs]
+# '''## plot velocity components for all years'''
+# ds_hofsj_vx['vx'].plot.imshow(cmap='PiYG', col='time', col_wrap=2, vmin=-50, vmax=50, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# ## get axes
+# axs = plt.gcf().axes[:-1] # exclude colorbar axis
+# [gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
+# [ax.set_axis_off() for ax in axs]
 
-## plot velocity components for all years
-ds_hofsj_vy['vy'].plot.imshow(cmap='PiYG', col='time', col_wrap=2, vmin=-50, vmax=50, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-## get axes
-axs = plt.gcf().axes[:-1] # exclude colorbar axis
-[gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
-[ax.set_axis_off() for ax in axs]
+# ## plot velocity components for all years
+# ds_hofsj_vy['vy'].plot.imshow(cmap='PiYG', col='time', col_wrap=2, vmin=-50, vmax=50, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# ## get axes
+# axs = plt.gcf().axes[:-1] # exclude colorbar axis
+# [gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
+# [ax.set_axis_off() for ax in axs]
 
-'''## calculate velocity magnitude'''
-da_hofsj_v = (np.sqrt(ds_hofsj_vx['vx']**2 + ds_hofsj_vy['vy']**2)).rename('velocity')
+# '''## calculate velocity magnitude'''
+# da_hofsj_v = (np.sqrt(ds_hofsj_vx['vx']**2 + ds_hofsj_vy['vy']**2)).rename('velocity')
 
-## plot velocity for all years
-da_hofsj_v.plot.imshow(cmap='viridis', col='time', col_wrap=2, vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
-## get axes
-axs = plt.gcf().axes[:-1] # exclude colorbar axis
-[gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
-[ax.set_axis_off() for ax in axs]
+# ## plot velocity for all years
+# da_hofsj_v.plot.imshow(cmap='viridis', col='time', col_wrap=2, vmin=0, vmax=100, cbar_kwargs={'fraction':0.02, 'label':'Velocity (m/yr)'})
+# ## get axes
+# axs = plt.gcf().axes[:-1] # exclude colorbar axis
+# [gdf_hofsj_union.boundary.plot(ax=ax,linestyle='--', color='white', linewidth=1) for ax in axs]
+# [ax.set_axis_off() for ax in axs]
 
 #%% Select only 2017-18, 2019-20, 2020-21, 2023-24
 years_select = [2017,2019,2020,2023]
@@ -475,18 +476,18 @@ else:
 ## show average fields (no smoothing)
 
 
-# fig,axs=plt.subplots(1,3,figsize=(16,5))
-fig,axs=plt.subplots(1,3,figsize=(16,4))
-da_hofsj_vx_sel.mean(dim='time').plot.imshow(ax=axs[0], vmin=-50, vmax=50, cmap="PiYG")
-axs[0].set_title('vx average (m/yr)')
-da_hofsj_vy_sel.mean(dim='time').plot.imshow(ax=axs[1], vmin=-50, vmax=50, cmap="PiYG")
-axs[1].set_title('vy average (m/yr)')
-da_hofsj_v_sel.mean(dim='time').plot.imshow(ax=axs[2], vmin=0, vmax=100, cmap='viridis')
-axs[2].set_title('v average (m/yr)')
-[ax.set_aspect('equal') for ax in axs]
+# # fig,axs=plt.subplots(1,3,figsize=(16,5))
+# fig,axs=plt.subplots(1,3,figsize=(16,4))
+# da_hofsj_vx_sel.mean(dim='time').plot.imshow(ax=axs[0], vmin=-50, vmax=50, cmap="PiYG")
+# axs[0].set_title('vx average (m/yr)')
+# da_hofsj_vy_sel.mean(dim='time').plot.imshow(ax=axs[1], vmin=-50, vmax=50, cmap="PiYG")
+# axs[1].set_title('vy average (m/yr)')
+# da_hofsj_v_sel.mean(dim='time').plot.imshow(ax=axs[2], vmin=0, vmax=100, cmap='viridis')
+# axs[2].set_title('v average (m/yr)')
+# [ax.set_aspect('equal') for ax in axs]
 
-fig.savefig('/Users/mizeboud/Documents/Documents_mizeboud/Projects/ContinuIX/WP1_data/figures/' + \
-                f'Hofsjokull_velocity_selectYears_mean.jpg', dpi=300)
+# fig.savefig('/Users/mizeboud/Documents/Documents_mizeboud/Projects/ContinuIX/WP1_data/figures/' + \
+#                 f'Hofsjokull_velocity_selectYears_mean.jpg', dpi=300)
     
 
 ## save SELECTED files to 'cleaned' datafolder 
@@ -515,8 +516,8 @@ for year in years_select:
     da_vz = ds_hofsj_vz['vz'].sel(time=year)
 
     fname_vz = f'hofsjokull_vz_{year}-{year+1}.tif'
-    fname_vx_std = f'hofsjokull_vx_{year}-{year+1}_std.tif'
-    fname_vy_std = f'hofsjokull_vy_{year}-{year+1}_std.tif'
+    fname_vx_std = f'hofsjokull_vx-std_{year}-{year+1}.tif'
+    fname_vy_std = f'hofsjokull_vy-std_{year}-{year+1}.tif'
 
      ## STDEVS
     if not os.path.exists(os.path.join(path2data_clean, fname_vx_std)):
@@ -532,8 +533,6 @@ for year in years_select:
         if not os.path.exists(os.path.join(path2data_clean, fname_vz)):
             print(f'Saving {fname_vz} to cleaned data dir')
             da_vz.rio.to_raster(os.path.join(path2data_clean, fname_vz))
-
-#%% 
 
 
 #%%
@@ -639,8 +638,6 @@ gdf_outline_2013.boundary.plot(ax=ax, color='black')
 ax.set_title('Thickness 25m (filled gaps)')
 
 
-# %%
-
 #%%
 ''' ## dhdt homogenized
 - also calculate 'average' dhdt over the period, similar as DEM: 
@@ -671,7 +668,7 @@ if count_invalid > 0:
 - interpolate 2018 to get annual values
 - take average
 '''
-# years_sel = [2017, 2019, 2020] ## selected years
+# years_select = [2017, 2019, 2020] ## selected years
 years_interp = [2017, 2018, 2019, 2020] ## add 2018 and interpolate to have annual values for 2017-2020
 da_hofsj_vx_annual = da_hofsj_vx_sel.interp(time=time_interp, method='linear')
 da_hofsj_vy_annual = da_hofsj_vy_sel.interp(time=time_interp, method='linear')
@@ -680,6 +677,11 @@ da_hofsj_vy_25m = datafuncs.reproject_match_grid(da_dummy_target.expand_dims('ti
 ## average over years
 da_vx_avg_25m = da_hofsj_vx_25m.mean(dim='time')
 da_vy_avg_25m = da_hofsj_vy_25m.mean(dim='time')
+
+## unct: average over years
+da_vx_std_25m = ds_hofsj_vx_std['vx'].sel(time=years_select).mean(dim='time')
+da_vy_std_25m = ds_hofsj_vy_std['vy'].sel(time=years_select).mean(dim='time')
+
 
 
 #%%
@@ -713,19 +715,31 @@ for idx, gdf_basin in gdf_basins_2013.iterrows(): # idx starts at 1
 
 #%%
 ''' ##################################
+Global uncertainties
+################################## '''
+
+'''# unct_thickness : unkown '''
+'''unct_dhdt : unkown '''
+'''unct_velo : stdev''' 
+
+#%%
+''' ##################################
 RESAMPLING TO TARGET GRID
 ################################## '''
 
 ## initial check that all variables have the same CRS, resolution and shape
-da_var_dict = {'bedrock':da_bed_25m.copy(),
-                'DEM': da_DEM_avg_25m.copy(),
-                'elevation_bins': da_elev_bins_25m.copy(),
-                'thickness':da_thickness_25m.copy(),
-                'dhdt': da_dhdt_avg_25m.copy(),
-                'vx': da_vx_avg_25m.copy(),
-                'vy': da_vy_avg_25m.copy(),
-                'icemask': da_outline_mask.copy(),
-                'basinmask': da_basin_mask.copy()
+da_var_dict = { 'BED':da_bed_25m.copy().rename('BED'),
+                'DEM': da_DEM_avg_25m.copy().rename('DEM'),
+                'ELEVBINS': da_elev_bins_25m.copy().rename('ELEVBINS'),
+                'THK':da_thickness_25m.copy().rename('THK'),
+                'DHDT': da_dhdt_avg_25m.copy().rename('DHDT'),
+                'VX': da_vx_avg_25m.copy().rename('VX'),
+                'VY': da_vy_avg_25m.copy().rename('VY'),
+                'ICEMASK': da_outline_mask.copy().rename('ICEMASK'),
+                'BASINMASK': da_basin_mask.copy().rename('BASINMASK'),
+                'UNCT_VX': da_vx_std_25m.copy().rename('UNCT_VX'),
+                'UNCT_VY': da_vy_std_25m.copy().rename('UNCT_VY'),
+                
 }
 ## resample to target grid where necessary
 for varname , var in da_var_dict.items():
@@ -737,18 +751,19 @@ for varname , var in da_var_dict.items():
         da_var_dict[varname] = var_target_res
         print(var_target_res.rio.resolution(), var_target_res.shape)
     if var.shape != da_dummy_target.shape:
-        raise ValueError(f"Shape of {varname} does not match target shape: {var_target_res.shape} vs {da_dummy_target.shape}")
+        print(f'.. reshaping {varname} from {var.shape} m to {da_dummy_target.shape} m')
+        var_target_res = datafuncs.reproject_match_grid(da_dummy_target, var, resample_method=rio.enums.Resampling.bilinear, nodata_value=np.nan)
+
+        ## put back in dictionary
+        da_var_dict[varname] = var_target_res
+        print(var_target_res.rio.resolution(), var_target_res.shape)
+        # raise ValueError(f"Shape of {varname} does not match target shape: {var_target_res.shape} vs {da_dummy_target.shape}")
     
 assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_dict.values()), "Not all variables have the same CRS"
 assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_dict.values()), "Not all variables have the same resolution"
 assert all(da.shape == da_dummy_target.shape for da in da_var_dict.values()), "Not all variables have the same shape"
 
 
-''' ##################################
-INTERPOLATING GAPS (if relevant)
-- thickness
-- DEM
-################################## '''
 
 
 #%%
@@ -758,11 +773,11 @@ INTERPOLATING GAPS (if relevant)
 Handle NaN values 
 '''
 
-da_outline_mask = (da_var_dict['icemask'].copy()
+da_outline_mask = (da_var_dict['ICEMASK'].copy()
                 #    .fillna(0) # fill NaN values with 0 (outside outline)
-                   .rename('icemask')
                    .assign_attrs({'long_name':'Glacier Outline Mask',
                                   'units':'year',
+                                  'uncertainty':'unknown',
                                   'crs':target_crs,
                                   'timestamp':'2013',
                                   'description': 'Value is max year of valid glaciated pixel', #; 0 for non-glaciated pixels.',
@@ -771,11 +786,11 @@ da_outline_mask = (da_var_dict['icemask'].copy()
                     .rio.write_crs(target_crs)
 )
 
-da_basin_mask = (da_var_dict['basinmask'].copy()
+da_basin_mask = (da_var_dict['BASINMASK'].copy()
                 #    .fillna(0) # fill NaN values with 0 (outside outline)
-                   .rename('basinmask')
                    .assign_attrs({'long_name':'Basin Mask',
                                   'units':'year',
+                                  'uncertainty':'unknown',
                                   'crs':target_crs,
                                   'timestamp':'2013',
                                   'description': 'Value indicates basin label that can be linked to a RGI-v6 glacier ID.',
@@ -786,9 +801,9 @@ da_basin_mask = (da_var_dict['basinmask'].copy()
 
 
 da_dem_hmg = (da_var_dict['DEM'].copy()
-                .rename('DEM') 
                 .assign_attrs({'long_name':'Elevation',
                                 'units':'m',
+                                  'uncertainty':'unknown',
                                 'crs':target_crs,
                                 'timestamp':'"2018"',
                                 'description':'Average elevation data from DEMs in 2013, 2020 and 2023 (orthometric height).'
@@ -796,11 +811,11 @@ da_dem_hmg = (da_var_dict['DEM'].copy()
                     .rio.write_crs(target_crs)
     )
 
-da_bedrock_hmg = (da_var_dict['bedrock'].copy()
+da_bedrock_hmg = (da_var_dict['BED'].copy()
                     # .fillna(-999) # fill NaN values with -999
-                    .rename('bedrock')
                     .assign_attrs({'long_name':'Bedrock Elevation',
                                    'units':'m',
+                                  'uncertainty':'unknown',
                                    'crs':target_crs,
                                    'timestamp':'2013',
                                    'description':'bedrock elevation. Echosounding performed in 1983 but bias-corrected to an additional 2013 survey.'
@@ -811,11 +826,12 @@ da_bedrock_hmg = (da_var_dict['bedrock'].copy()
 # if da_elev_bins_hmg.isnull().any():
 #     raise ValueError("Elevation bins has NaN values (since DEM has them), cannot assign nodata value of 0.")
 # else: 
-da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
+da_elev_bins_hmg = (da_var_dict['ELEVBINS'].copy()
                     # .fillna(-999) # fill NaN values with -999
-                    .rename('elevation_bins')
+                    # .rename('ELEVBINS')
                     .assign_attrs({'long_name':'Elevation Bins',
                                   'units':'m',
+                                  'uncertainty':'n/a',
                                   'crs':target_crs,
                                   'timestamp':'"2018"',
                                   'description': f'Discretized elevation values into bins of 50 m. Using lowest (left-edge) value for each bin. Determined from average DEM over 2013-2023.'
@@ -824,22 +840,22 @@ da_elev_bins_hmg = (da_var_dict['elevation_bins'].copy()
 )
 
 ## thickness, dhdt, velo: can fill NaN with 0
-da_thickness_hmg = (da_var_dict['thickness'].copy()
+da_thickness_hmg = (da_var_dict['THK'].copy()
                     .fillna(0)
-                    .rename('thickness')
                     .assign_attrs({'long_name':'Ice Thickness',
                                    'units':'m',
+                                  'uncertainty':'unknown',
                                    'crs':target_crs,
                                    'timestamp':'"2018"',
                                    'description':'Ice thickness calculated from DEM-bedrock, using average DEM of 2013-2023. Missing/NaN values were filled with 0.',
                                    'nodata': 0})
                 .rio.write_crs(target_crs)
                     )
-da_dhdt_hmg = (da_var_dict['dhdt'].copy()
+da_dhdt_hmg = (da_var_dict['DHDT'].copy()
                .fillna(0)
-               .rename('dhdt')
                .assign_attrs({'long_name':'Surface Elevation Change',
                               'units':'m/year',
+                                  'uncertainty':'unknown',
                               'crs':target_crs,
                               'timestamp':'"2013-2023"',
                               'description':'Average annual elevation change, obtained from DEMs in 2013, 2020 and 2023. Missing/NaN values were filled with 0.',
@@ -847,11 +863,11 @@ da_dhdt_hmg = (da_var_dict['dhdt'].copy()
                 .rio.write_crs(target_crs)
                )
 
-da_vx_hmg = (da_var_dict['vx'].copy()
+da_vx_hmg = (da_var_dict['VX'].copy()
              .fillna(0)
-             .rename('vx')
              .assign_attrs({'long_name': 'surface ice velocity (x-component)',
                             'units':'m/year',
+                                  'uncertainty':'provided as grid, UNCT_VX',
                             'crs':target_crs,
                             'timestamp':'2017-2020',
                             'description':'Average velocity for the period 2017-2020, calculated from observations in 2017, 2019, 2020. Missing/NaN values were filled with 0.',
@@ -860,11 +876,12 @@ da_vx_hmg = (da_var_dict['vx'].copy()
                 .rio.write_crs(target_crs)
 )
 
-da_vy_hmg = (da_var_dict['vy'].copy()
+da_vy_hmg = (da_var_dict['VY'].copy()
              .fillna(0)
-             .rename('vy')
+             # .rename('VY')
              .assign_attrs({'long_name': 'surface ice velocity (y-component)',
                             'units':'m/year',
+                            'uncertainty':'provided as grid, UNCT_VY',
                             'crs':target_crs,
                             'timestamp':'2017-2020',
                             'description':'Average velocity for the period 2017-2020, calculated from observations in 2017, 2019, 2020. Missing/NaN values were filled with 0.',
@@ -873,6 +890,31 @@ da_vy_hmg = (da_var_dict['vy'].copy()
                 .rio.write_crs(target_crs)
 )
 
+da_vx_std_hmg = (da_var_dict['UNCT_VX'].copy()
+             .fillna(0)
+             .assign_attrs({'long_name': 'surface ice velocity uncertainty (x-component)',
+                            'units':'m/year',
+                            'uncertainty':'n/a',
+                            'crs':target_crs,
+                            'timestamp':'2017-2020',
+                            'description':'Standard deviation of velocity component, averaged for the period 2017-2020. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
+
+da_vy_std_hmg = (da_var_dict['UNCT_VY'].copy()
+             .fillna(0)
+             .assign_attrs({'long_name': 'surface ice velocity uncertainty (y-component)',
+                            'units':'m/year',
+                            'uncertainty':'n/a',
+                            'crs':target_crs,
+                            'timestamp':'2017-2020',
+                            'description':'Standard deviation of velocity component, averaged for the period 2017-2020. Missing/NaN values were filled with 0.',
+                            'nodata': 0
+                            })
+                .rio.write_crs(target_crs)
+)
 #%%
 
 ## final check that everything is still homogenized 
@@ -885,7 +927,9 @@ da_var_list = [ da_bedrock_hmg,
                 da_vx_hmg,
                 da_vy_hmg,
                 da_outline_mask,
-                da_basin_mask
+                da_basin_mask,
+                da_vx_std_hmg,
+                da_vy_std_hmg,
                 ]
 assert all(da.rio.crs == da_dummy_target.rio.crs for da in da_var_list), "Not all variables have the same CRS"
 assert all(da.rio.resolution() == da_dummy_target.rio.resolution() for da in da_var_list), "Not all variables have the same resolution"
@@ -979,19 +1023,33 @@ with xr.open_dataset(
     assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
 
 #%%
+#
+fname_nc = 'hofsjokull_glacier_observations.nc'
+
+with xr.open_dataset(
+        os.path.join(path2data_homog, fname_nc),
+        decode_coords="all" # decode_coords="all" is important when reopening NetCDFs with rioxarray-style CRS metadata; otherwise the CRS may appear to be missing.
+    ) as ds_glacier_loaded:
+    
+    print('CRS:', ds_glacier_loaded.rio.crs)
+    print('spatial_ref attrs:', ds_glacier_loaded["spatial_ref"].attrs)
+    assert ds_glacier_loaded.rio.crs is not None, "CRS is missing in the loaded dataset"
+
 ## check values by plotting
-fig,axs=plt.subplots(2,4, figsize=(20,8))
+fig,axs=plt.subplots(2,4, figsize=(16,8))
 row,col = 0,0
-for var in ds_glacier_loaded.data_vars:
-    if var == 'spatial_ref':
-        continue  # Skip plotting the spatial_ref variable
-    if var == 'basinmask':
-        break  # Stop after plotting the last variable
+for var, cmap, vminmax in zip(  ['BED',     'DEM',     'ELEVBINS', 'THK', 'DHDT', 'VX', 'VY',   'ICEMASK'],
+                                ['cividis','cividis','cividis',  'Blues', 'RdBu','PiYG','PiYG',  'viridis'],
+                                [(0.6e3, 1.8e3), (0.6e3, 1.8e3), (0.6e3, 1.8e3), (0,700),  (-5,5), (-100,100),(-100,100),None]):
+    if vminmax is not None:
+        vmin, vmax = vminmax
+    else:
+        vmin, vmax = None, None
+
     da_plot = ds_glacier_loaded[var]
-    # print(da_plot)
-    # fig,ax=plt.subplots(figsize=(6,5))
+
     ax=axs[row,col]
-    da_plot.plot.imshow(ax=ax, cbar_kwargs={'shrink': 0.7})
+    da_plot.plot.imshow(ax=ax, vmin=vmin, vmax=vmax, cmap=cmap, cbar_kwargs={'shrink': 0.7})
     ax.set_title(var)
     col+=1
     if col >= 4:
@@ -999,10 +1057,8 @@ for var in ds_glacier_loaded.data_vars:
         row += 1
 [ax.set_aspect('equal') for ax in axs.flatten()];
 [ax.set_axis_off() for ax in axs.flatten()];
-fig.tight_layout()
+
 fig.savefig(os.path.join(path2data_homog, 'hofsjokull_netcdf_vars.png'), dpi=300)
-
-
 # %%
 
 
