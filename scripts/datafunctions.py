@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 import rasterio as rio
 import rioxarray as rioxr
-
+import warnings
 
 def count_nan_values_in_glacier(da, outline_gdf):
     """
@@ -36,14 +36,16 @@ def reproject_match_grid( ref_img_da, img_da , resample_method=rio.enums.Resampl
         ref_img_da = ref_img_da.transpose('time','y','x') # CRS is alreadyy written .rio.write_crs(3031, inplace=True)
         img_da = img_da.transpose('time','y','x')
     
-    # -- reproject (even though same crs) and match grid (extent, resolution and projection)
-    img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning) ## ignore 'rectified to skew grid conversion' warnings
+        # -- reproject (even though same crs) and match grid (extent, resolution and projection)
+        img_repr_match = img_da.rio.reproject_match(ref_img_da,resampling=resample_method,nodata=nodata_value) # need to specify nodata, otherwise fills with (inf) number 1.79769313e+308
 
-    # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
-    img_repr_match = img_repr_match.assign_coords({
-        "y": ref_img_da.y,
-        "x": ref_img_da.x,
-    })
+        # advised to update coords to make the coordinates the exact same due to tiny differences in the coordinate values due to floating precision
+        img_repr_match = img_repr_match.assign_coords({
+            "y": ref_img_da.y,
+            "x": ref_img_da.x,
+        })
     
     return img_repr_match.transpose(*dims) # transpose dimension order back to original
 
@@ -62,8 +64,9 @@ def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m', add_buffer=None)
     x0 = ds.x.min().item() ; x1 = ds.x.max().item() ; y0 = ds.y.min().item() ; y1 = ds.y.max().item()
     if add_buffer:
         x0 -= add_buffer; x1 += add_buffer; y0 -= add_buffer; y1 += add_buffer
-    # x0 = np.floor(x0/grid_res)*grid_res; x1 = np.floor(x1/grid_res)*grid_res; 
-    # y0 = np.floor(y0/grid_res)*grid_res; y1 = np.floor(y1/grid_res)*grid_res
+    ## make grid coordinates start and end at multiples of grid_res to avoid floating point precision issues
+    x0 = np.floor(x0/grid_res)*grid_res; x1 = np.floor(x1/grid_res)*grid_res; 
+    y0 = np.floor(y0/grid_res)*grid_res; y1 = np.floor(y1/grid_res)*grid_res
     x_seq = np.arange(x0, x1+grid_res, step=grid_res )
     y_seq = np.arange(y0, y1+grid_res, step=grid_res )
 
@@ -78,18 +81,20 @@ def create_regular_dummy_grid(ds, grid_res, crs=None, unit='m', add_buffer=None)
     x_seq = np.round(x_seq, decimal_places)
     y_seq = np.round(y_seq, decimal_places)
 
-    grid_dummy = xr.DataArray(
-        data=np.ones( (len(y_seq), len(x_seq)) ),
-        dims=["y", "x"],
-        coords=dict(
-            y=y_seq,
-            x=x_seq,
-        ),
-        attrs=dict(
-            description=f"regular grid at {grid_res} {unit} resolution",
-            unit=unit,
-        ),
-    ).rio.write_crs(crs)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning) ## ignore 'rectified to skew grid conversion' warnings
+        grid_dummy = xr.DataArray(
+            data=np.ones( (len(y_seq), len(x_seq)) ),
+            dims=["y", "x"],
+            coords=dict(
+                y=y_seq,
+                x=x_seq,
+            ),
+            attrs=dict(
+                description=f"regular grid at {grid_res} {unit} resolution",
+                unit=unit,
+            ),
+        ).rio.write_crs(crs)
     
     return grid_dummy
 
